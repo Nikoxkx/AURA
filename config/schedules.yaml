@@ -1,0 +1,47 @@
+# AURA - Task Schedules
+# Defines when different tasks run.
+
+discovery:
+  interval_minutes: 60
+  jitter_seconds: 300  # Add randomness to avoid detection
+
+extraction:
+  interval_minutes: 60
+  batch_size: 10
+  concurrent_workers: 3
+
+graph_update:
+  interval_minutes: 60
+  batch_size: 50
+
+insight_generation:
+  interval_minutes: 60
+  min_documents_required: 2
+
+report_generation:
+  daily:
+    hour: 23  # UTC
+    minute: 0
+  weekly:
+    day_of_week: monday
+    hour: 8
+    minute: 0
+
+newsletter:
+  weekly:
+    day_of_week: friday
+    hour: 16
+    minute: 0
+
+reflection:
+  after_each_run: true
+  improvement_review_hours: 24
+
+self_improvement:
+  quality_review_interval_hours: 24
+  metric_analysis_window_days: 30
+  min_runs_before_adjustment: 5
+
+monitoring:
+  metrics_push_interval_seconds: 60
+  health_check_interval_seconds: 30

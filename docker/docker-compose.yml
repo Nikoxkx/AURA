@@ -1,0 +1,160 @@
+# =============================================================================
+# AURA - Docker Compose Configuration
+# Complete stack for production deployment.
+# =============================================================================
+
+version: "3.8"
+
+services:
+  # ── PostgreSQL + pgvector ───────────────────────────────────────────────────
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: aura-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-aura}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-aura_password}
+      POSTGRES_DB: ${POSTGRES_DB:-aura}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-aura}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - aura-network
+
+  # ── Neo4j Knowledge Graph ───────────────────────────────────────────────────
+  neo4j:
+    image: neo4j:5-community
+    container_name: aura-neo4j
+    restart: unless-stopped
+    environment:
+      NEO4J_AUTH: ${NEO4J_USER:-neo4j}/${NEO4J_PASSWORD:-aura_neo4j_password}
+      NEO4J_PLUGINS: '["apoc"]'
+      NEO4J_server_memory_pagecache_size: 256M
+      NEO4J_server_memory_heap_initial__size: 512M
+      NEO4J_server_memory_heap_max__size: 1G
+    volumes:
+      - neo4j_data:/data
+      - neo4j_logs:/logs
+    ports:
+      - "7474:7474"  # HTTP
+      - "7687:7687"  # Bolt
+    healthcheck:
+      test: ["CMD-SHELL", "cypher-shell -u ${NEO4J_USER:-neo4j} -p ${NEO4J_PASSWORD:-aura_neo4j_password} 'RETURN 1'"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+    networks:
+      - aura-network
+
+  # ── Redis (Task Queue & Caching) ────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: aura-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - aura-network
+
+  # ── AURA Agent ──────────────────────────────────────────────────────────────
+  aura-agent:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: aura-agent
+    restart: unless-stopped
+    env_file:
+      - ../.env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-aura}:${POSTGRES_PASSWORD:-aura_password}@postgres:5432/${POSTGRES_DB:-aura}
+      NEO4J_URI: bolt://neo4j:7687
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      postgres:
+        condition: service_healthy
+      neo4j:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ../reports:/app/reports
+      - ../config:/app/config
+    ports:
+      - "${AURA_API_PORT:-8080}:8080"
+      - "9090:9090"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      start_period: 120s
+      retries: 3
+    networks:
+      - aura-network
+
+  # ── Prometheus Monitoring ───────────────────────────────────────────────────
+  prometheus:
+    image: prom/prometheus:v2.49.0
+    container_name: aura-prometheus
+    restart: unless-stopped
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    ports:
+      - "${PROMETHEUS_PORT:-9091}:9090"
+    depends_on:
+      - aura-agent
+    networks:
+      - aura-network
+
+  # ── Grafana Dashboards ──────────────────────────────────────────────────────
+  grafana:
+    image: grafana/grafana:10.3.0
+    container_name: aura-grafana
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./grafana/dashboards:/etc/grafana/provisioning/dashboards
+      - ./grafana/datasources:/etc/grafana/provisioning/datasources
+    ports:
+      - "${GRAFANA_PORT:-3000}:3000"
+    depends_on:
+      - prometheus
+    networks:
+      - aura-network
+
+# ── Volumes ───────────────────────────────────────────────────────────────────
+volumes:
+  postgres_data:
+    driver: local
+  neo4j_data:
+    driver: local
+  neo4j_logs:
+    driver: local
+  redis_data:
+    driver: local
+  prometheus_data:
+    driver: local
+  grafana_data:
+    driver: local
+
+# ── Network ───────────────────────────────────────────────────────────────────
+networks:
+  aura-network:
+    driver: bridge

@@ -1,0 +1,125 @@
+{
+  "dashboard": {
+    "title": "AURA - System Overview",
+    "description": "Main dashboard for AURA autonomous research agent",
+    "tags": ["aura", "research", "ai"],
+    "timezone": "utc",
+    "refresh": "30s",
+    "panels": [
+      {
+        "title": "Agent Cycle Duration",
+        "type": "timeseries",
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.95, rate(aura_agent_cycle_duration_seconds_bucket[5m]))",
+            "legendFormat": "p95 duration"
+          },
+          {
+            "expr": "histogram_quantile(0.50, rate(aura_agent_cycle_duration_seconds_bucket[5m]))",
+            "legendFormat": "p50 duration"
+          }
+        ]
+      },
+      {
+        "title": "Documents Discovered",
+        "type": "timeseries",
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
+        "targets": [
+          {
+            "expr": "rate(aura_documents_discovered_total[1h])",
+            "legendFormat": "{{source_type}}"
+          }
+        ]
+      },
+      {
+        "title": "Documents Processed",
+        "type": "stat",
+        "gridPos": {"h": 4, "w": 6, "x": 0, "y": 8},
+        "targets": [
+          {
+            "expr": "aura_documents_processed_total",
+            "legendFormat": "Total Processed"
+          }
+        ]
+      },
+      {
+        "title": "Insights Generated",
+        "type": "stat",
+        "gridPos": {"h": 4, "w": 6, "x": 6, "y": 8},
+        "targets": [
+          {
+            "expr": "aura_insights_generated_total",
+            "legendFormat": "{{insight_type}}"
+          }
+        ]
+      },
+      {
+        "title": "Knowledge Graph Nodes",
+        "type": "stat",
+        "gridPos": {"h": 4, "w": 6, "x": 12, "y": 8},
+        "targets": [
+          {
+            "expr": "aura_graph_nodes_total",
+            "legendFormat": "{{node_type}}"
+          }
+        ]
+      },
+      {
+        "title": "Errors",
+        "type": "stat",
+        "gridPos": {"h": 4, "w": 6, "x": 18, "y": 8},
+        "targets": [
+          {
+            "expr": "rate(aura_errors_total[1h])",
+            "legendFormat": "{{category}}"
+          }
+        ]
+      },
+      {
+        "title": "LLM Token Usage",
+        "type": "timeseries",
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 12},
+        "targets": [
+          {
+            "expr": "rate(aura_llm_tokens_used_total[1h])",
+            "legendFormat": "{{model}} - {{token_type}}"
+          }
+        ]
+      },
+      {
+        "title": "LLM Call Duration",
+        "type": "timeseries",
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 12},
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.95, rate(aura_llm_call_duration_seconds_bucket[5m]))",
+            "legendFormat": "{{model}} p95"
+          }
+        ]
+      },
+      {
+        "title": "Extraction Duration",
+        "type": "timeseries",
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 20},
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.95, rate(aura_extraction_duration_seconds_bucket[5m]))",
+            "legendFormat": "p95 extraction time"
+          }
+        ]
+      },
+      {
+        "title": "Memory Search Duration",
+        "type": "timeseries",
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 20},
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.95, rate(aura_memory_search_duration_seconds_bucket[5m]))",
+            "legendFormat": "p95 search time"
+          }
+        ]
+      }
+    ]
+  }
+}

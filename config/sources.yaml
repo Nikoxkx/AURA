@@ -1,0 +1,57 @@
+# AURA - Discovery Sources Configuration
+# Configure each discovery source.
+
+arxiv:
+  enabled: true
+  categories:
+    - cs.AI
+    - cs.CL
+    - cs.LG
+    - cs.CV
+    - cs.SE
+    - cs.NE
+    - cs.IR
+  max_results_per_search: 10
+  rate_limit_delay_seconds: 3
+
+semantic_scholar:
+  enabled: true
+  fields_of_study:
+    - Computer Science
+  min_citation_count: 0
+  max_results_per_search: 10
+
+hacker_news:
+  enabled: true
+  min_score: 10
+  max_top_stories: 20
+  max_new_stories: 15
+
+github_trending:
+  enabled: true
+  languages:
+    - python
+    - typescript
+    - rust
+  since: daily
+  min_stars: 10
+
+rss:
+  enabled: true
+  feeds:
+    - https://openai.com/blog/rss.xml
+    - https://www.anthropic.com/feed
+    - https://research.google/blog/rss/
+    - https://huggingface.co/blog/feed.xml
+    - https://lilianweng.github.io/index.xml
+    - https://distill.pub/rss.xml
+    - https://blogs.microsoft.com/ai/feed/
+    - https://engineering.fb.com/feed/
+    - https://blog.jetbrains.com/feed/
+    - https://stackoverflow.blog/feed/
+    - https://github.blog/feed/
+  max_per_feed: 10
+
+crossref:
+  enabled: false
+  # Crossref API can be enabled for broader coverage

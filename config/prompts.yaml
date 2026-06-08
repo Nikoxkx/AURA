@@ -1,0 +1,254 @@
+# AURA - LLM Prompt Templates
+# All prompts used by the agent's LLM interactions.
+
+# ── Planning Prompts ──────────────────────────────────────────────────────────
+
+planning:
+  system: |
+    You are the planning module of an autonomous AI research agent named AURA.
+    Your mission is to maintain an up-to-date understanding of AI and software engineering research.
+    Create focused, actionable research plans for each cycle.
+
+  cycle_plan: |
+    You are the planning module of an autonomous AI research agent.
+
+    Your mission: "Maintain an up-to-date understanding of AI and software engineering research."
+
+    Current context:
+    - Cycle number: {cycle_number}
+    - Time of day: {time_of_day}
+    - Last run quality score: {last_quality_score}
+    - Recent trends: {recent_trends}
+    - Recent failures: {recent_failures}
+    - Improvement suggestions: {improvement_suggestions}
+    - Memory size: {memory_size} documents
+
+    Based on this context, create a research plan. Specify:
+    1. Research goals for this cycle (2-4 goals)
+    2. Priority topics to focus on
+    3. How many documents to process (5-50)
+    4. Any special focus areas
+
+    Respond in JSON:
+    {{
+        "goals": ["goal1", "goal2"],
+        "priority_topics": ["topic1", "topic2"],
+        "max_documents": 30,
+        "reasoning": "Why these choices..."
+    }}
+
+    Return ONLY the JSON object.
+
+# ── Evaluation Prompts ────────────────────────────────────────────────────────
+
+evaluation:
+  document_importance: |
+    Evaluate this research document for importance to AI/software engineering research:
+
+    Title: {title}
+    Abstract: {abstract}
+    Source: {source_type}
+    Authors: {authors}
+
+    Rate on these dimensions (0.0-1.0):
+    1. Relevance to current AI/SE research
+    2. Novelty of approach
+    3. Potential impact on the field
+
+    Also provide:
+    - Overall importance: critical / high / medium / low / noise
+    - 2-3 sentence reasoning
+
+    Respond in JSON:
+    {{
+        "relevance": 0.8,
+        "novelty": 0.7,
+        "impact": 0.9,
+        "importance": "high",
+        "reasoning": "This paper introduces..."
+    }}
+
+# ── Extraction Prompts ────────────────────────────────────────────────────────
+
+extraction:
+  knowledge_extraction: |
+    You are an expert research analyst. Extract structured knowledge from this document.
+
+    Document Title: {title}
+    Document URL: {url}
+    Source Type: {source_type}
+
+    Content:
+    {content}
+
+    Extract the following as valid JSON (no markdown, just raw JSON):
+    {{
+        "domain": "Primary research domain (e.g., NLP, Computer Vision, ML Systems, Software Engineering)",
+        "entities": ["List of named entities: people, organizations, datasets, benchmarks"],
+        "methods": ["List of methods, techniques, or approaches described"],
+        "findings": ["List of key findings or results"],
+        "limitations": ["List of stated limitations or weaknesses"],
+        "future_work": ["List of suggested future work directions"],
+        "key_contributions": ["List of the main contributions of this work"],
+        "related_concepts": ["List of broader concepts and topics this relates to"],
+        "technologies": ["List of specific technologies, frameworks, or tools mentioned"],
+        "organizations": ["List of organizations, universities, or companies involved"],
+        "summary": "A 2-3 paragraph comprehensive summary of the document"
+    }}
+
+    Return ONLY the JSON object, no additional text.
+
+  repo_analysis: |
+    Analyze this GitHub repository for its research/engineering significance:
+
+    Repository: {repo_name}
+    Description: {description}
+    Language: {language}
+    Stars: {stars}
+    README (excerpt): {readme}
+
+    Extract:
+    {{
+        "domain": "Primary domain",
+        "key_innovation": "What's novel about this",
+        "technologies": ["List of technologies used"],
+        "related_concepts": ["Related research areas"],
+        "summary": "1-2 paragraph summary"
+    }}
+
+    Return ONLY the JSON object.
+
+# ── Insight Generation Prompts ────────────────────────────────────────────────
+
+insights:
+  synthesis: |
+    You are an expert research synthesis analyst. Analyze these research documents and generate original insights.
+
+    Documents:
+    {documents}
+
+    Generate insights in the following categories. For each insight, provide:
+    1. A clear title
+    2. A detailed explanation (2-4 paragraphs)
+    3. Supporting evidence from the documents
+    4. Your confidence level (0.0-1.0)
+
+    Categories to analyze:
+
+    A) SYNTHESIS: Identify common themes across papers. Where do multiple papers converge on similar findings or approaches?
+    Example: "Three recent papers independently propose retrieval architectures that reduce hallucinations."
+
+    B) CONTRADICTION: Find conflicting findings or approaches. Where do papers disagree?
+    Example: "Paper A reports gains while Paper B reports degradation under similar conditions."
+
+    C) TREND: Identify emerging trends in the research landscape.
+    Example: "Agentic workflows increased 240% in research mentions over 60 days."
+
+    D) OPPORTUNITY: Identify gaps or opportunities that no paper currently addresses.
+    Example: "No paper currently combines technique X with technique Y."
+
+    Respond in this JSON format:
+    {{
+        "synthesis": [
+            {{
+                "title": "...",
+                "content": "...",
+                "evidence": ["doc1 title", "doc2 title"],
+                "confidence": 0.85
+            }}
+        ],
+        "contradictions": [...],
+        "trends": [...],
+        "opportunities": [...]
+    }}
+
+    Return ONLY the JSON object.
+
+  contradiction_analysis: |
+    Compare these two findings from different papers and determine if they contradict:
+
+    Paper A: {paper_a_title}
+    Findings: {paper_a_findings}
+
+    Paper B: {paper_b_title}
+    Findings: {paper_b_findings}
+
+    Do these findings contradict each other? Explain why or why not.
+    Rate the contradiction confidence (0.0-1.0).
+
+    JSON response:
+    {{
+        "is_contradiction": true/false,
+        "explanation": "...",
+        "confidence": 0.8,
+        "shared_context": "What conditions are similar"
+    }}
+
+# ── Reflection Prompts ────────────────────────────────────────────────────────
+
+reflection:
+  post_run: |
+    You are an AI research agent reflecting on your latest run cycle.
+
+    Run Summary:
+    - Duration: {duration:.1f} seconds
+    - Documents Discovered: {docs_discovered}
+    - Documents Processed: {docs_processed}
+    - Insights Generated: {insights_generated}
+    - Graph Nodes Added: {graph_nodes}
+    - Errors: {error_count}
+
+    Previous Errors:
+    {errors}
+
+    Answer these questions:
+
+    1. WHAT WORKED? What went well during this run? What strategies were effective?
+    2. WHAT FAILED? What didn't work? What errors occurred? What could be improved?
+    3. WHAT SURPRISED ME? Was there anything unexpected? Any novel findings?
+    4. WHAT SHOULD I INVESTIGATE NEXT? Based on this run, what should the next cycle focus on?
+
+    5. QUALITY SCORE: Rate this run's overall quality from 0.0 to 1.0.
+
+    6. IMPROVEMENT SUGGESTIONS: What specific changes should I make for the next run?
+
+    Respond in JSON format:
+    {{
+        "what_worked": ["item1", "item2"],
+        "what_failed": ["item1", "item2"],
+        "what_surprised": ["item1"],
+        "what_to_investigate_next": ["topic1", "topic2"],
+        "quality_score": 0.8,
+        "improvement_suggestions": ["suggestion1", "suggestion2"]
+    }}
+
+    Return ONLY the JSON object.
+
+# ── Report Generation Prompts ─────────────────────────────────────────────────
+
+reports:
+  executive_summary: |
+    Summarize today's AI research findings in 2-3 paragraphs.
+
+    Key insights:
+    {insights}
+
+    Papers analyzed:
+    {papers}
+
+    Write a professional executive summary suitable for a research newsletter.
+    Focus on the most significant findings and their implications.
+
+  weekly_digest_intro: |
+    Write a brief, engaging introduction (2-3 sentences) for this week's AI research digest.
+    Highlight the most exciting or surprising finding.
+    
+    Top insights:
+    {top_insights}
+
+# ── Newsletter Prompts ────────────────────────────────────────────────────────
+
+newsletter:
+  weekly_subject: "AURA Weekly Research Digest — {date}"
+  weekly_intro: |
+    Here's what AURA discovered this week in AI and software engineering research.
