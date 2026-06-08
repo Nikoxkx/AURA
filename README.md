@@ -1,5 +1,6 @@
 <div align="center">
-<img width="880" src="docs/assets/aura-banner.png" />
+<img width="3616" height="2080" alt="thu-berchs-2-3" src="https://github.com/user-attachments/assets/e4dc5d0a-c9c2-4fb0-b8fc-9d5187b6e577" />
+
 
 # AURA
 
