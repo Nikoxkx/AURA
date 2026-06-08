@@ -1,5 +1,5 @@
 <div align="center">
-<img width="120" src="https://raw.githubusercontent.com/Tarikul-Islam-Anik/Animated-Fluent-Emojis/master/Emojis/Objects/Laboratory%20Flask.png" />
+<img width="880" src="docs/assets/aura-banner.png" />
 
 # AURA
 
