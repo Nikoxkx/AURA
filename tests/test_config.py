@@ -2,11 +2,9 @@
 AURA - Configuration Tests
 """
 
-import pytest
-import os
-from unittest.mock import patch
 
-from src.common.config import AppConfig, LLMConfig, DatabaseConfig, get_config
+import pytest
+from src.common.config import AppConfig, DatabaseConfig, LLMConfig, get_config
 
 
 class TestConfig:
@@ -29,7 +27,9 @@ class TestConfig:
 
     def test_invalid_log_level(self):
         """Test invalid log level raises error."""
-        with pytest.raises(Exception):
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError):
             AppConfig(AURA_LOG_LEVEL="invalid")
 
     def test_database_url_default(self):

@@ -5,12 +5,10 @@ Defines the agent's state machine for LangGraph-based orchestration.
 
 from __future__ import annotations
 
-from datetime import datetime
-from enum import Enum
-from typing import Any, Annotated
+from typing import Annotated, Any
 
-from pydantic import BaseModel, Field
 from langgraph.graph.message import add_messages
+from pydantic import BaseModel, ConfigDict, Field
 
 from src.common.models import (
     AgentPhase,
@@ -20,7 +18,6 @@ from src.common.models import (
     ExtractedKnowledge,
     Insight,
     Reflection,
-    RunStatus,
     SourceDocument,
 )
 
@@ -69,5 +66,4 @@ class AgentState(BaseModel):
     # Improvement recommendations
     improvement_recommendations: dict[str, Any] = Field(default_factory=dict)
 
-    class Config:
-        arbitrary_types_allowed = True
+    model_config = ConfigDict(arbitrary_types_allowed=True)

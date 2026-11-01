@@ -7,25 +7,22 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
-from typing import Any, Optional
 
+from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
-    Column,
-    String,
-    Text,
-    Float,
-    Integer,
+    JSON,
     Boolean,
     DateTime,
+    Float,
     ForeignKey,
-    JSON,
     Index,
-    text,
+    Integer,
+    String,
+    Text,
     UniqueConstraint,
 )
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
-from pgvector.sqlalchemy import Vector
 
 
 class Base(DeclarativeBase):
@@ -48,21 +45,22 @@ class Document(Base):
     source_id: Mapped[str] = mapped_column(String(255), default="")
     authors: Mapped[list] = mapped_column(JSON, default=list)
     abstract: Mapped[str] = mapped_column(Text, default="")
-    published_date: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    published_date: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     discovered_date: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     processed: Mapped[bool] = mapped_column(Boolean, default=False)
-    processed_date: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    processed_date: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     importance: Mapped[str] = mapped_column(String(20), default="medium")
     relevance_score: Mapped[float] = mapped_column(Float, default=0.5)
     novelty_score: Mapped[float] = mapped_column(Float, default=0.5)
     impact_score: Mapped[float] = mapped_column(Float, default=0.5)
     combined_score: Mapped[float] = mapped_column(Float, default=0.5)
     keywords: Mapped[list] = mapped_column(JSON, default=list)
-    metadata: Mapped[dict] = mapped_column(JSON, default=dict)
-    embedding: Mapped[Optional[list]] = mapped_column(Vector(1536), nullable=True)
+    # NB: "metadata" as an attribute name is reserved by SQLAlchemy's declarative API.
+    extra_metadata: Mapped[dict] = mapped_column("metadata", JSON, default=dict)
+    embedding: Mapped[list | None] = mapped_column(Vector(1536), nullable=True)
 
     # Relationships
-    knowledge: Mapped[Optional["ExtractedKnowledgeRow"]] = relationship(
+    knowledge: Mapped[ExtractedKnowledgeRow | None] = relationship(
         back_populates="document", uselist=False
     )
 
@@ -93,10 +91,10 @@ class ExtractedKnowledgeRow(Base):
     technologies: Mapped[list] = mapped_column(JSON, default=list)
     organizations: Mapped[list] = mapped_column(JSON, default=list)
     summary: Mapped[str] = mapped_column(Text, default="")
-    embedding: Mapped[Optional[list]] = mapped_column(Vector(1536), nullable=True)
+    embedding: Mapped[list | None] = mapped_column(Vector(1536), nullable=True)
     extracted_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
-    document: Mapped["Document"] = relationship(back_populates="knowledge")
+    document: Mapped[Document] = relationship(back_populates="knowledge")
 
     __table_args__ = (
         Index("idx_knowledge_domain", "domain"),
@@ -115,8 +113,8 @@ class AgentThought(Base):
     thought_type: Mapped[str] = mapped_column(String(50), nullable=False)
     # thought_type: plan, observation, decision, reflection, error
     content: Mapped[str] = mapped_column(Text, nullable=False)
-    metadata: Mapped[dict] = mapped_column(JSON, default=dict)
-    embedding: Mapped[Optional[list]] = mapped_column(Vector(1536), nullable=True)
+    extra_metadata: Mapped[dict] = mapped_column("metadata", JSON, default=dict)
+    embedding: Mapped[list | None] = mapped_column(Vector(1536), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     __table_args__ = (
@@ -144,7 +142,7 @@ class AgentRun(Base):
     reflection: Mapped[dict] = mapped_column(JSON, default=dict)
     quality_score: Mapped[float] = mapped_column(Float, default=0.0)
     started_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     duration_seconds: Mapped[float] = mapped_column(Float, default=0.0)
 
     __table_args__ = (
@@ -192,7 +190,7 @@ class InsightRecord(Base):
     importance: Mapped[str] = mapped_column(String(20), default="medium")
     run_id: Mapped[str] = mapped_column(String(64), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-    embedding: Mapped[Optional[list]] = mapped_column(Vector(1536), nullable=True)
+    embedding: Mapped[list | None] = mapped_column(Vector(1536), nullable=True)
 
     __table_args__ = (
         Index("idx_insights_type", "insight_type"),
@@ -215,7 +213,7 @@ class TrendRecord(Base):
     time_window_days: Mapped[int] = mapped_column(Integer, default=60)
     first_seen: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     last_seen: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-    metadata: Mapped[dict] = mapped_column(JSON, default=dict)
+    extra_metadata: Mapped[dict] = mapped_column("metadata", JSON, default=dict)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     __table_args__ = (

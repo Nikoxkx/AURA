@@ -5,8 +5,8 @@ Fetches articles from configured RSS feeds.
 
 from __future__ import annotations
 
+import contextlib
 from datetime import datetime
-from typing import Any
 
 import feedparser
 import httpx
@@ -95,10 +95,8 @@ class RSSSource:
                     for date_field in ["published_parsed", "updated_parsed"]:
                         date_struct = entry.get(date_field)
                         if date_struct:
-                            try:
+                            with contextlib.suppress(TypeError, ValueError):
                                 published_date = datetime(*date_struct[:6])
-                            except (TypeError, ValueError):
-                                pass
                             break
 
                     # Tags/categories

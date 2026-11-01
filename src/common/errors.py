@@ -4,18 +4,18 @@ AURA - Custom exceptions and error handling.
 
 from __future__ import annotations
 
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 
-class ErrorSeverity(str, Enum):
+class ErrorSeverity(StrEnum):
     LOW = "low"
     MEDIUM = "medium"
     HIGH = "high"
     CRITICAL = "critical"
 
 
-class ErrorCategory(str, Enum):
+class ErrorCategory(StrEnum):
     API_FAILURE = "api_failure"
     NETWORK_ERROR = "network_error"
     DATA_MALFORMED = "data_malformed"
@@ -81,7 +81,7 @@ class GraphError(AuraError):
         super().__init__(message, category=ErrorCategory.GRAPH_ERROR, **kwargs)
 
 
-class MemoryError(AuraError):
+class MemoryStoreError(AuraError):
     """Error during memory operations."""
 
     def __init__(self, message: str, **kwargs: Any):

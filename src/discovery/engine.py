@@ -6,24 +6,18 @@ Discovers new research papers, articles, repositories, and breakthroughs.
 from __future__ import annotations
 
 import asyncio
-import hashlib
-from datetime import datetime, timedelta
 from typing import Any
-
-from tenacity import retry, stop_after_attempt, wait_exponential
 
 from src.common.config import get_config, load_yaml_config
 from src.common.logging import get_logger
+from src.common.metrics import (
+    documents_evaluated_total,
+)
 from src.common.models import (
-    DocumentType,
     EvaluatedDocument,
     ImportanceLevel,
     SourceDocument,
     SourceType,
-)
-from src.common.metrics import (
-    documents_discovered_total,
-    documents_evaluated_total,
 )
 
 logger = get_logger(__name__)
@@ -57,6 +51,11 @@ class DiscoveryEngine:
             "autonomous systems",
             "software engineering AI",
         ]
+
+    def _source_enabled(self, name: str) -> bool:
+        """Return whether a source is enabled in config/sources.yaml."""
+        section = self.sources_config.get(name) or {}
+        return bool(section.get("enabled", True))
 
     def update_priority_topics(self, topics: list[str]) -> None:
         """Update priority topics from reflection."""
@@ -134,6 +133,8 @@ class DiscoveryEngine:
 
     async def _discover_arxiv(self) -> list[SourceDocument]:
         """Discover papers from arXiv."""
+        if not self._source_enabled("arxiv"):
+            return []
         from src.discovery.arxiv import ArxivSource
 
         source = ArxivSource()
@@ -157,12 +158,16 @@ class DiscoveryEngine:
 
         except Exception as e:
             logger.error("arxiv_discovery_failed", error=str(e))
+        finally:
+            await source.close()
 
         logger.info("arxiv_discovered", count=len(documents))
         return documents
 
     async def _discover_semantic_scholar(self) -> list[SourceDocument]:
         """Discover papers from Semantic Scholar."""
+        if not self._source_enabled("semantic_scholar"):
+            return []
         from src.discovery.semantic_scholar import SemanticScholarSource
 
         source = SemanticScholarSource()
@@ -177,12 +182,16 @@ class DiscoveryEngine:
                     logger.warning("semantic_scholar_search_failed", topic=topic, error=str(e))
         except Exception as e:
             logger.error("semantic_scholar_discovery_failed", error=str(e))
+        finally:
+            await source.close()
 
         logger.info("semantic_scholar_discovered", count=len(documents))
         return documents
 
     async def _discover_hacker_news(self) -> list[SourceDocument]:
         """Discover trending items from Hacker News."""
+        if not self._source_enabled("hacker_news"):
+            return []
         from src.discovery.hacker_news import HackerNewsSource
 
         source = HackerNewsSource()
@@ -196,12 +205,16 @@ class DiscoveryEngine:
             documents.extend(new_stories)
         except Exception as e:
             logger.error("hacker_news_discovery_failed", error=str(e))
+        finally:
+            await source.close()
 
         logger.info("hacker_news_discovered", count=len(documents))
         return documents
 
     async def _discover_github_trending(self) -> list[SourceDocument]:
         """Discover trending repositories from GitHub."""
+        if not self._source_enabled("github_trending"):
+            return []
         from src.discovery.github_trending import GitHubTrendingSource
 
         source = GitHubTrendingSource()
@@ -223,12 +236,16 @@ class DiscoveryEngine:
             documents.extend(trending_ts)
         except Exception as e:
             logger.error("github_trending_discovery_failed", error=str(e))
+        finally:
+            await source.close()
 
         logger.info("github_trending_discovered", count=len(documents))
         return documents
 
     async def _discover_rss_feeds(self) -> list[SourceDocument]:
         """Discover articles from RSS feeds."""
+        if not self._source_enabled("rss"):
+            return []
         from src.discovery.rss_feeds import RSSSource
 
         source = RSSSource()
@@ -239,6 +256,8 @@ class DiscoveryEngine:
             documents.extend(feed_results)
         except Exception as e:
             logger.error("rss_discovery_failed", error=str(e))
+        finally:
+            await source.close()
 
         logger.info("rss_discovered", count=len(documents))
         return documents
@@ -330,10 +349,48 @@ class DiscoveryEngine:
         # Boost for prestigious sources
         if doc.source_type in (SourceType.ARXIV, SourceType.SEMANTIC_SCHOLAR):
             score += 0.1
-        if doc.source_type == SourceType.GITHUB and doc.metadata.get("stars", 0) > 1000:
-            score += 0.15
 
-        return min(score, 1.0)
+        # Boost for popular repositories. Scaling with the star count keeps a
+        # 500-star repo from looking as important as a 50k-star one.
+        stars = doc.metadata.get("stars", 0) or 0
+        try:
+            stars = int(stars)
+        except (TypeError, ValueError):
+            stars = 0
+        if doc.source_type == SourceType.GITHUB and stars > 0:
+            if stars >= 10000:
+                score += 0.3
+            elif stars >= 1000:
+                score += 0.25
+            elif stars >= 100:
+                score += 0.15
+            else:
+                score += 0.05
+
+        # Well-cited papers are a strong impact signal.
+        citations = doc.metadata.get("citation_count", 0) or 0
+        try:
+            citations = int(citations)
+        except (TypeError, ValueError):
+            citations = 0
+        if citations > 0:
+            if citations >= 1000:
+                score += 0.25
+            elif citations >= 100:
+                score += 0.2
+            elif citations >= 10:
+                score += 0.1
+
+        # Hacker News popularity is a useful proxy for impact as well.
+        hn_score = doc.metadata.get("score", 0) or 0
+        try:
+            hn_score = int(hn_score)
+        except (TypeError, ValueError):
+            hn_score = 0
+        if doc.source_type == SourceType.HACKER_NEWS and hn_score > 0:
+            score += min(hn_score / 2000, 0.15)
+
+        return min(max(score, 0.0), 1.0)
 
     async def _llm_evaluate(self, doc: SourceDocument) -> str:
         """Use LLM for intelligent evaluation."""

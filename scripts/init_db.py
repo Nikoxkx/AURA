@@ -12,7 +12,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.common.config import get_config
-from src.common.logging import setup_logging, get_logger
+from src.common.logging import get_logger, setup_logging
 
 logger = get_logger(__name__)
 
@@ -30,7 +30,8 @@ async def init_database():
         stats = await store.get_stats()
         logger.info("database_initialized", stats=stats)
         print("✓ Database initialized successfully")
-        print(f"  Tables created: documents, extracted_knowledge, agent_thoughts, agent_runs, reports, insights, trends, quality_metrics, failed_attempts")
+        print("  Tables created: documents, extracted_knowledge, agent_thoughts, "
+              "agent_runs, reports, insights, trends, quality_metrics, failed_attempts")
     except Exception as e:
         logger.error("database_init_failed", error=str(e))
         print(f"✗ Database initialization failed: {e}")
@@ -56,11 +57,11 @@ async def init_neo4j():
         stats = await graph.get_stats()
         logger.info("neo4j_initialized", stats=stats)
         print("✓ Neo4j initialized successfully")
-        print(f"  Indexes and constraints created")
+        print("  Indexes and constraints created")
     except Exception as e:
         logger.error("neo4j_init_failed", error=str(e))
-        print(f"✗ Neo4j initialization failed: {e}")
-        sys.exit(1)
+        # Neo4j is optional; report the problem but let init complete.
+        print(f"⚠ Neo4j initialization failed (optional): {e}")
     finally:
         await graph.close()
 

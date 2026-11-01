@@ -6,13 +6,10 @@ Extracts structured knowledge from documents using LLMs.
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime
-from typing import Any
-
-from tenacity import retry, stop_after_attempt, wait_exponential
+from typing import TYPE_CHECKING, Any
 
 from src.common.config import get_config
-from src.common.errors import ExtractionError, LLMError
+from src.common.errors import LLMError
 from src.common.logging import get_logger
 from src.common.metrics import (
     documents_processed_total,
@@ -20,13 +17,14 @@ from src.common.metrics import (
     extraction_errors_total,
     llm_call_duration_seconds,
     llm_calls_total,
-    llm_tokens_used,
 )
 from src.common.models import (
     EvaluatedDocument,
     ExtractedKnowledge,
 )
-from src.memory.models import Document
+
+if TYPE_CHECKING:
+    from src.memory.models import Document
 
 logger = get_logger(__name__)
 
@@ -171,6 +169,7 @@ class ExtractionEngine:
     async def _get_content(self, document: Document) -> str:
         """Get the text content of a document."""
         content_parts = []
+        metadata = getattr(document, "extra_metadata", None) or {}
 
         if document.abstract:
             content_parts.append(f"Abstract: {document.abstract}")
@@ -182,8 +181,8 @@ class ExtractionEngine:
             # PDF reading would be implemented with the PDF tool
         elif document.source_type == "github":
             content_parts.append(f"Repository: {document.url}")
-            if document.metadata.get("description"):
-                content_parts.append(f"Description: {document.metadata['description']}")
+            if metadata.get("description"):
+                content_parts.append(f"Description: {metadata['description']}")
         elif document.source_type == "hacker_news":
             content_parts.append(f"Discussion: {document.url}")
         else:
@@ -208,7 +207,7 @@ class ExtractionEngine:
             return response
         except Exception as e:
             llm_calls_total.labels(model=self.config.llm.model, status="error").inc()
-            raise LLMError(f"LLM call failed: {e}")
+            raise LLMError(f"LLM call failed: {e}") from e
 
     def _parse_llm_response(self, response: str) -> dict[str, Any]:
         """Parse the LLM response into a structured dictionary."""

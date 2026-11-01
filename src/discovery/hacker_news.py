@@ -5,12 +5,12 @@ Fetches trending stories from Hacker News.
 
 from __future__ import annotations
 
+import re
 from datetime import datetime
-from typing import Any
 
 import httpx
-from tenacity import retry, stop_after_attempt, wait_exponential
 
+from src.common.config import load_yaml_config
 from src.common.logging import get_logger
 from src.common.models import DocumentType, SourceDocument, SourceType
 
@@ -33,6 +33,8 @@ class HackerNewsSource:
 
     def __init__(self):
         self.client = httpx.AsyncClient(base_url=HN_API_BASE, timeout=15.0)
+        config = load_yaml_config("sources").get("hacker_news", {}) or {}
+        self.min_score = int(config.get("min_score", 10))
 
     async def get_top_stories(self, max_results: int = 20) -> list[SourceDocument]:
         """Get top stories filtered for AI/tech relevance."""
@@ -119,12 +121,15 @@ class HackerNewsSource:
 
         # Must have minimum score
         score = doc.metadata.get("score", 0)
-        if score < 10:
+        if score < self.min_score:
             return False
 
-        # Check for relevance keywords
-        matches = sum(1 for keyword in RELEVANCE_KEYWORDS if keyword in text)
-        return matches >= 1
+        # Match whole words so short keywords like "ai" don't match "said"
+        # or "email".
+        for keyword in RELEVANCE_KEYWORDS:
+            if re.search(rf"(?<![\w-]){re.escape(keyword)}(?![\w-])", text):
+                return True
+        return False
 
     async def close(self) -> None:
         await self.client.aclose()

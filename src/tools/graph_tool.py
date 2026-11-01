@@ -5,11 +5,13 @@ Query and modify the knowledge graph.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from src.common.logging import get_logger
 from src.common.models import GraphEdge, GraphEdgeType, GraphNode, GraphNodeType
-from src.knowledge.graph import KnowledgeGraph
+
+if TYPE_CHECKING:
+    from src.knowledge.graph import KnowledgeGraph
 
 logger = get_logger(__name__)
 

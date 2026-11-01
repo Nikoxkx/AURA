@@ -2,12 +2,10 @@
 AURA - Common Models Tests
 """
 
-import pytest
 from datetime import datetime
 
 from src.common.models import (
     AgentPhase,
-    AgentPlan,
     AgentRunResult,
     DocumentType,
     EvaluatedDocument,
@@ -20,7 +18,6 @@ from src.common.models import (
     Insight,
     InsightType,
     Reflection,
-    Report,
     RunStatus,
     SourceDocument,
     SourceType,

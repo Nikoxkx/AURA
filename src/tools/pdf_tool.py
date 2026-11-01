@@ -11,8 +11,8 @@ from typing import Any
 
 import httpx
 
-from src.common.logging import get_logger
 from src.common.errors import ExtractionError
+from src.common.logging import get_logger
 
 logger = get_logger(__name__)
 
@@ -46,14 +46,14 @@ class PDFTool:
 
         except Exception as e:
             logger.error("pdf_extraction_error", source=url_or_path, error=str(e))
-            raise ExtractionError(f"PDF extraction failed: {e}", document_url=url_or_path)
+            raise ExtractionError(f"PDF extraction failed: {e}", document_url=url_or_path) from e
 
     async def _download_pdf(self, url: str) -> Path:
         """Download a PDF from URL to a temp file."""
         response = await self.client.get(url)
         response.raise_for_status()
 
-        tmp = tempfile.NamedTemporaryFile(suffix=".pdf", delete=False)
+        tmp = tempfile.NamedTemporaryFile(suffix=".pdf", delete=False)  # noqa: SIM115
         tmp.write(response.content)
         tmp.close()
         return Path(tmp.name)
@@ -90,7 +90,7 @@ class PDFTool:
                 return "\n\n".join(text_parts)
 
             except ImportError:
-                raise ExtractionError("No PDF library available. Install PyMuPDF or pypdf.")
+                raise ExtractionError("No PDF library available. Install PyMuPDF or pypdf.") from None
 
     async def close(self) -> None:
         await self.client.aclose()

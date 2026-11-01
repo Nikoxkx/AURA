@@ -5,14 +5,13 @@ Generates structured research reports in Markdown.
 
 from __future__ import annotations
 
-import os
 from datetime import datetime
-from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
 from src.common.config import get_config
 from src.common.logging import get_logger
+from src.common.metrics import reports_published_total
 from src.common.models import (
     ExtractedKnowledge,
     Insight,
@@ -20,14 +19,13 @@ from src.common.models import (
     Reflection,
     Report,
 )
-from src.common.metrics import reports_published_total
 
 logger = get_logger(__name__)
 
 REPORT_TEMPLATE = """# AURA Research Report
 
-**Date:** {date}  
-**Report ID:** {report_id}  
+**Date:** {date}
+**Report ID:** {report_id}
 **Type:** {report_type}
 
 ---
@@ -312,8 +310,8 @@ Write a professional executive summary suitable for a research newsletter."""
         return (
             f"- Papers processed: {len(knowledge_items)}\n"
             f"- Insights generated: {len(insights)}\n"
-            f"- Insight types: {', '.join(set(i.insight_type.value for i in insights))}\n"
-            f"- Domains covered: {', '.join(set(k.domain for k in knowledge_items if k.domain))}\n"
+            f"- Insight types: {', '.join({i.insight_type.value for i in insights})}\n"
+            f"- Domains covered: {', '.join({k.domain for k in knowledge_items if k.domain})}\n"
         )
 
     async def _save_report(self, report: Report) -> None:
@@ -327,4 +325,12 @@ Write a professional executive summary suitable for a research newsletter."""
         filepath = report_dir / filename
 
         filepath.write_text(report.content_markdown)
+
+        # Keep an easy-to-find copy of the newest report at the root.
+        latest_path = reports_dir / "latest.md"
+        try:
+            latest_path.write_text(report.content_markdown)
+        except OSError as e:  # pragma: no cover - disk issues are non-fatal
+            logger.warning("latest_report_write_failed", error=str(e))
+
         logger.info("report_saved", path=str(filepath))

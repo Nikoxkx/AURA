@@ -2,9 +2,8 @@
 AURA - Insight Engine Tests
 """
 
-import pytest
-from unittest.mock import AsyncMock
 
+import pytest
 from src.common.models import (
     ExtractedKnowledge,
     ImportanceLevel,

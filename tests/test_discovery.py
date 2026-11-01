@@ -2,9 +2,9 @@
 AURA - Discovery Engine Tests
 """
 
-import pytest
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock
 
+import pytest
 from src.common.models import (
     DocumentType,
     EvaluatedDocument,

@@ -5,13 +5,11 @@ Unified interface for LLM interactions (OpenAI / Anthropic).
 
 from __future__ import annotations
 
-import asyncio
 from typing import Any
 
 import httpx
-from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
-from src.common.config import get_config, LLMConfig
+from src.common.config import LLMConfig, get_config
 from src.common.errors import LLMError
 from src.common.logging import get_logger
 from src.common.metrics import (
@@ -35,10 +33,27 @@ class LLMClient:
         self._initialized = False
 
     async def initialize(self) -> None:
-        """Initialize the LLM client."""
+        """Initialize the LLM client.
+
+        Never raises: a missing key or an unavailable SDK simply disables the
+        LLM-backed paths (the agent degrades to heuristic behaviour) instead of
+        crashing the process at start-up.
+        """
+        import os
+
+        self._initialized = True
+
+        if not os.environ.get("OPENAI_API_KEY"):
+            self._client = None
+            logger.warning(
+                "llm_api_key_missing",
+                hint="Set OPENAI_API_KEY to enable LLM-backed planning, "
+                "extraction and synthesis; running with heuristics only.",
+            )
+            return
+
         try:
             from langchain_openai import ChatOpenAI
-            from langchain_core.messages import HumanMessage
 
             self._client = ChatOpenAI(
                 model=self.config.model,
@@ -46,12 +61,11 @@ class LLMClient:
                 max_tokens=self.config.max_tokens,
                 timeout=self.config.timeout,
             )
-            self._initialized = True
             logger.info("llm_client_initialized", model=self.config.model)
-        except ImportError:
+        except Exception as e:
             # Fallback to direct API calls
-            self._initialized = True
-            logger.info("llm_client_fallback_direct_api")
+            self._client = None
+            logger.info("llm_client_fallback_direct_api", reason=str(e))
 
     async def generate(self, prompt: str, system: str = "") -> str:
         """Generate text from a prompt."""
@@ -93,7 +107,7 @@ class LLMClient:
 
         except Exception as e:
             llm_calls_total.labels(model=self.config.model, status="error").inc()
-            raise LLMError(f"Generation failed: {e}")
+            raise LLMError(f"Generation failed: {e}") from e
 
     async def _direct_api_call(self, prompt: str, system: str = "") -> str:
         """Direct API call fallback."""
@@ -138,6 +152,8 @@ class LLMClient:
         import os
 
         api_key = os.environ.get("OPENAI_API_KEY", "")
+        if not api_key:
+            raise LLMError("No API key configured for embeddings")
 
         async with httpx.AsyncClient(timeout=30) as client:
             response = await client.post(

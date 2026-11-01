@@ -8,20 +8,11 @@ global:
     environment: 'production'
 
 scrape_configs:
-  - job_name: 'aura-agent'
-    scrape_interval: 15s
-    static_configs:
-      - targets: ['aura-agent:9090']
-    metrics_path: /metrics
-
-  - job_name: 'aura-api'
+  - job_name: 'aura'
     scrape_interval: 15s
     static_configs:
       - targets: ['aura-agent:8080']
     metrics_path: /metrics
-
-rule_files:
-  - 'alerts.yml'
 
 alerting:
   alertmanagers:

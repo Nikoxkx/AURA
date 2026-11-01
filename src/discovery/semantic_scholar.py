@@ -5,11 +5,12 @@ Fetches papers from the Semantic Scholar API.
 
 from __future__ import annotations
 
+import contextlib
+import os
 from datetime import datetime
 from typing import Any
 
 import httpx
-from tenacity import retry, stop_after_attempt, wait_exponential
 
 from src.common.config import get_config
 from src.common.logging import get_logger
@@ -24,8 +25,8 @@ class SemanticScholarSource:
     """Discovers papers from Semantic Scholar."""
 
     def __init__(self, api_key: str | None = None):
-        config = get_config()
-        self.api_key = api_key or ""
+        get_config()
+        self.api_key = api_key or os.environ.get("SEMANTIC_SCHOLAR_API_KEY", "")
         headers = {}
         if self.api_key:
             headers["x-api-key"] = self.api_key
@@ -132,10 +133,8 @@ class SemanticScholarSource:
                 year = paper.get("year")
                 published_date = None
                 if year:
-                    try:
+                    with contextlib.suppress(ValueError, TypeError):
                         published_date = datetime(int(year), 1, 1)
-                    except (ValueError, TypeError):
-                        pass
 
                 # Fields of study
                 fields = paper.get("fieldsOfStudy", []) or []

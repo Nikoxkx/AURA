@@ -6,42 +6,65 @@ Main agent loop using LangGraph for state-based orchestration.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import time
 import uuid
 from datetime import datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from langgraph.graph import StateGraph, END
+from langgraph.graph import END, StateGraph
 
+from src.agent.planner import Planner
+from src.agent.state import AgentState
 from src.common.config import get_config
-from src.common.errors import AuraError
 from src.common.logging import get_logger
 from src.common.metrics import (
     agent_cycle_duration_seconds,
     agent_cycles_total,
-    agent_current_phase,
     errors_total,
+    set_agent_phase,
     system_uptime_seconds,
 )
 from src.common.models import (
     AgentPhase,
     AgentRunResult,
-    EvaluatedDocument,
-    ExtractedKnowledge,
     ImportanceLevel,
     RunStatus,
     SourceDocument,
 )
-from src.agent.state import AgentState
-from src.agent.planner import Planner
 from src.discovery.engine import DiscoveryEngine
 from src.extraction.engine import ExtractionEngine
 from src.insights.engine import InsightEngine
 from src.reflection.reflector import Reflector
-from src.memory.store import MemoryStore
-from src.knowledge.graph import KnowledgeGraph
+
+if TYPE_CHECKING:
+    from src.knowledge.graph import KnowledgeGraph
+    from src.memory.store import MemoryStore
 
 logger = get_logger(__name__)
+
+
+def _transient_document(doc: SourceDocument) -> Any:
+    """Build an unsaved Document row so extraction can run without a database."""
+    import uuid as _uuid
+
+    from src.memory.models import Document
+
+    return Document(
+        id=_uuid.uuid4(),
+        content_hash=doc.content_hash,
+        title=doc.title,
+        url=doc.url,
+        source_type=doc.source_type.value,
+        document_type=doc.document_type.value,
+        source_id=doc.source_id,
+        authors=list(doc.authors),
+        abstract=doc.abstract,
+        published_date=doc.published_date,
+        discovered_date=doc.discovered_date,
+        keywords=list(doc.keywords),
+        extra_metadata=dict(doc.metadata),
+    )
 
 
 class AuraAgent:
@@ -77,12 +100,34 @@ class AuraAgent:
         self._start_time = time.monotonic()
 
     async def initialize(self) -> None:
-        """Initialize all components."""
+        """Initialize all components.
+
+        PostgreSQL (memory) is required. Neo4j (knowledge graph) is optional:
+        when it is unreachable the agent keeps running and simply skips the
+        ``connect`` phase instead of refusing to start.
+        """
         if self.memory:
             await self.memory.initialize()
+
         if self.graph:
-            await self.graph.initialize()
+            try:
+                await self.graph.initialize()
+            except Exception as e:
+                logger.warning(
+                    "knowledge_graph_unavailable",
+                    error=str(e),
+                    hint="Continuing without Neo4j; graph insights will be skipped.",
+                )
+                await self._disable_knowledge_graph()
+
         logger.info("aura_agent_initialized")
+
+    async def _disable_knowledge_graph(self) -> None:
+        """Drop the knowledge graph dependency from every component."""
+        self.graph = None
+        for component in (self.insight_engine,):
+            if getattr(component, "graph", None) is not None:
+                component.graph = None
 
     async def shutdown(self) -> None:
         """Gracefully shutdown all components."""
@@ -99,6 +144,7 @@ class AuraAgent:
         """Execute a single agent cycle."""
         self._cycle_count += 1
         run_id = f"run_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
+        cycle_started_at = datetime.utcnow()
 
         logger.info("agent_cycle_started", run_id=run_id, cycle=self._cycle_count)
 
@@ -129,9 +175,20 @@ class AuraAgent:
         start_time = time.monotonic()
 
         try:
-            final_state = await compiled.ainvoke(state)
-            status = RunStatus.COMPLETED
-            agent_cycles_total.labels(status="success").inc()
+            raw_state = await compiled.ainvoke(state)
+            # LangGraph returns a plain dict even when the graph is declared
+            # with a Pydantic state schema, so normalise it back to AgentState.
+            final_state = (
+                raw_state
+                if isinstance(raw_state, AgentState)
+                else AgentState.model_validate(raw_state)
+            )
+            status = (
+                RunStatus.PARTIAL if final_state.errors else RunStatus.COMPLETED
+            )
+            agent_cycles_total.labels(
+                status="partial" if status == RunStatus.PARTIAL else "success"
+            ).inc()
 
         except Exception as e:
             logger.error("agent_cycle_error", run_id=run_id, error=str(e))
@@ -148,6 +205,8 @@ class AuraAgent:
         result = AgentRunResult(
             run_id=run_id,
             status=status,
+            started_at=cycle_started_at,
+            completed_at=datetime.utcnow(),
             plan=final_state.plan,
             documents_discovered=len(final_state.discovered_documents),
             documents_processed=len(final_state.extracted_knowledge),
@@ -155,7 +214,11 @@ class AuraAgent:
             graph_nodes_added=final_state.graph_nodes_added,
             graph_edges_added=final_state.graph_edges_added,
             errors=final_state.errors,
-            reflection=final_state.reflection.model_dump() if final_state.reflection else {},
+            reflection=(
+                final_state.reflection.model_dump(mode="json")
+                if final_state.reflection
+                else {}
+            ),
         )
 
         # Store run in memory
@@ -188,7 +251,7 @@ class AuraAgent:
 
         while self._running:
             try:
-                result = await self.run_once()
+                await self.run_once()
 
                 # Update uptime
                 system_uptime_seconds.set(time.monotonic() - self._start_time)
@@ -259,7 +322,7 @@ class AuraAgent:
     async def _node_plan(self, state: AgentState) -> dict[str, Any]:
         """Planning node: create research plan."""
         state.current_phase = AgentPhase.PLANNING
-        agent_current_phase.set(AgentPhase.PLANNING.value)
+        set_agent_phase(AgentPhase.PLANNING.value)
 
         logger.info("phase_planning", run_id=state.run_id, cycle=state.cycle_number)
 
@@ -270,22 +333,20 @@ class AuraAgent:
 
         # Store plan in memory
         if self.memory:
-            try:
+            with contextlib.suppress(Exception):
                 await self.memory.store_thought(
                     run_id=state.run_id,
                     phase="planning",
                     thought_type="plan",
                     content=plan.model_dump_json(),
                 )
-            except Exception:
-                pass
 
         return {"plan": plan, "current_phase": AgentPhase.DISCOVERY}
 
     async def _node_discover(self, state: AgentState) -> dict[str, Any]:
         """Discovery node: search for new content."""
         state.current_phase = AgentPhase.DISCOVERY
-        agent_current_phase.set(AgentPhase.DISCOVERY.value)
+        set_agent_phase(AgentPhase.DISCOVERY.value)
 
         logger.info("phase_discovery", run_id=state.run_id)
 
@@ -300,7 +361,7 @@ class AuraAgent:
     async def _node_evaluate(self, state: AgentState) -> dict[str, Any]:
         """Evaluation node: rank and filter documents."""
         state.current_phase = AgentPhase.EVALUATION
-        agent_current_phase.set(AgentPhase.EVALUATION.value)
+        set_agent_phase(AgentPhase.EVALUATION.value)
 
         logger.info("phase_evaluation", run_id=state.run_id, documents=len(state.discovered_documents))
 
@@ -314,7 +375,7 @@ class AuraAgent:
     async def _node_extract(self, state: AgentState) -> dict[str, Any]:
         """Extraction node: extract knowledge from documents."""
         state.current_phase = AgentPhase.EXTRACTION
-        agent_current_phase.set(AgentPhase.EXTRACTION.value)
+        set_agent_phase(AgentPhase.EXTRACTION.value)
 
         # Filter documents to process
         to_process = [
@@ -325,14 +386,18 @@ class AuraAgent:
         logger.info("phase_extraction", run_id=state.run_id, documents_to_process=len(to_process))
 
         try:
-            # For extraction, we need Document objects from memory
-            # Get or create documents in memory
+            # For extraction we need something that quacks like the Document
+            # ORM row. When memory is configured we persist first; without
+            # memory (e.g. dry runs) we fall back to a transient row so the
+            # extraction phase still does real work.
             doc_pairs = []
             for eval_doc in to_process:
                 if self.memory:
                     db_doc = await self.memory.store_document(eval_doc.document)
                     await self.memory.update_document_evaluation(db_doc.id, eval_doc)
-                    doc_pairs.append((db_doc, eval_doc))
+                else:
+                    db_doc = _transient_document(eval_doc.document)
+                doc_pairs.append((db_doc, eval_doc))
 
             extracted = await self.extraction.extract_from_documents(doc_pairs)
             return {"extracted_knowledge": extracted}
@@ -343,7 +408,7 @@ class AuraAgent:
     async def _node_connect(self, state: AgentState) -> dict[str, Any]:
         """Connection node: update knowledge graph."""
         state.current_phase = AgentPhase.CONNECTION
-        agent_current_phase.set(AgentPhase.CONNECTION.value)
+        set_agent_phase(AgentPhase.CONNECTION.value)
 
         nodes_added = 0
         edges_added = 0
@@ -375,7 +440,7 @@ class AuraAgent:
     async def _node_synthesize(self, state: AgentState) -> dict[str, Any]:
         """Synthesis node: generate insights."""
         state.current_phase = AgentPhase.SYNTHESIS
-        agent_current_phase.set(AgentPhase.SYNTHESIS.value)
+        set_agent_phase(AgentPhase.SYNTHESIS.value)
 
         logger.info("phase_synthesize", run_id=state.run_id)
 
@@ -386,10 +451,8 @@ class AuraAgent:
             # Store insights in memory
             if self.memory:
                 for insight in insights:
-                    try:
+                    with contextlib.suppress(Exception):
                         await self.memory.store_insight(insight, run_id=state.run_id)
-                    except Exception:
-                        pass
 
             return {"insights": insights}
         except Exception as e:
@@ -399,7 +462,7 @@ class AuraAgent:
     async def _node_reflect(self, state: AgentState) -> dict[str, Any]:
         """Reflection node: analyze run performance."""
         state.current_phase = AgentPhase.REFLECTION
-        agent_current_phase.set(AgentPhase.REFLECTION.value)
+        set_agent_phase(AgentPhase.REFLECTION.value)
 
         logger.info("phase_reflect", run_id=state.run_id)
 
@@ -426,7 +489,7 @@ class AuraAgent:
     async def _node_publish(self, state: AgentState) -> dict[str, Any]:
         """Publication node: generate and publish reports."""
         state.current_phase = AgentPhase.PUBLICATION
-        agent_current_phase.set(AgentPhase.PUBLICATION.value)
+        set_agent_phase(AgentPhase.PUBLICATION.value)
 
         logger.info("phase_publish", run_id=state.run_id)
 
@@ -450,12 +513,29 @@ class AuraAgent:
                 if self.memory and report:
                     await self.memory.store_report(report)
 
+                # Regenerate the static site so the newest report is browsable
+                if report:
+                    try:
+                        from src.publication.website import WebsiteGenerator
+
+                        await WebsiteGenerator(
+                            memory_store=self.memory
+                        ).generate()
+                    except Exception as e:
+                        logger.warning("website_generation_failed", error=str(e))
+
                 # Publish to GitHub if configured
                 if report and self.config.publication.github_token:
                     try:
                         from src.publication.github_pub import GitHubPublisher
-                        publisher = GitHubPublisher(self.config.publication.github_token)
-                        await publisher.publish_report(report)
+                        publisher = GitHubPublisher(
+                            self.config.publication.github_token,
+                            repo=self.config.publication.github_repo or None,
+                        )
+                        try:
+                            await publisher.publish_report(report)
+                        finally:
+                            await publisher.close()
                     except Exception as e:
                         logger.warning("github_publish_failed", error=str(e))
 

@@ -106,10 +106,7 @@ class Planner:
 
         try:
             json_match = re.search(r"\{[\s\S]*\}", response)
-            if json_match:
-                data = json.loads(json_match.group())
-            else:
-                data = json.loads(response)
+            data = json.loads(json_match.group()) if json_match else json.loads(response)
         except json.JSONDecodeError:
             return None
 
