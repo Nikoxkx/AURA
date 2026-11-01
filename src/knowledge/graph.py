@@ -5,26 +5,25 @@ Neo4j-backed knowledge graph for connecting research entities.
 
 from __future__ import annotations
 
-import uuid
+import hashlib
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any
 
-from neo4j import AsyncGraphDatabase, AsyncDriver, AsyncSession
-from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
+from neo4j import AsyncDriver, AsyncGraphDatabase
+from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
 from src.common.config import get_config
 from src.common.logging import get_logger
+from src.common.metrics import (
+    graph_nodes_total,
+    graph_operations_total,
+)
 from src.common.models import (
     ExtractedKnowledge,
     GraphEdge,
     GraphEdgeType,
     GraphNode,
     GraphNodeType,
-)
-from src.common.metrics import (
-    graph_edges_total,
-    graph_nodes_total,
-    graph_operations_total,
 )
 
 logger = get_logger(__name__)
@@ -48,7 +47,9 @@ class KnowledgeGraph:
         self.driver: AsyncDriver | None = None
 
     async def initialize(self) -> None:
-        """Initialize Neo4j connection and create indexes."""
+        """Initialize Neo4j connection and create indexes (idempotent)."""
+        if self.driver is not None:
+            return
         self.driver = AsyncGraphDatabase.driver(
             self.uri,
             auth=(self.user, self.password),
@@ -85,9 +86,10 @@ class KnowledgeGraph:
                     logger.warning("index_creation_warning", query=query, error=str(e))
 
     async def close(self) -> None:
-        """Close Neo4j connection."""
+        """Close Neo4j connection (idempotent)."""
         if self.driver:
             await self.driver.close()
+            self.driver = None
             logger.info("knowledge_graph_closed")
 
     # ── Node Operations ───────────────────────────────────────────────────────
@@ -200,6 +202,17 @@ class KnowledgeGraph:
 
     # ── Document Processing ───────────────────────────────────────────────────
 
+    @staticmethod
+    def make_node_id(prefix: str, name: str) -> str:
+        """Build a deterministic node id.
+
+        Python's built-in ``hash()`` is salted per process, so using it here
+        would give the same paper a different id on every restart and quietly
+        duplicate the whole graph. A truncated SHA-256 is stable.
+        """
+        digest = hashlib.sha256(name.strip().lower().encode("utf-8")).hexdigest()[:16]
+        return f"{prefix}_{digest}"
+
     async def process_extracted_knowledge(
         self,
         knowledge: ExtractedKnowledge,
@@ -209,7 +222,7 @@ class KnowledgeGraph:
         stats = {"nodes_added": 0, "edges_added": 0}
 
         # Create Paper node
-        paper_id = f"paper_{hash(document_url) % (10**16):016d}"
+        paper_id = self.make_node_id("paper", document_url)
         paper_node = GraphNode(
             node_id=paper_id,
             node_type=GraphNodeType.PAPER,
@@ -226,7 +239,7 @@ class KnowledgeGraph:
 
         # Create Author nodes and edges
         for author_name in knowledge.authors:
-            author_id = f"author_{hash(author_name) % (10**16):016d}"
+            author_id = self.make_node_id("author", author_name)
             author_node = GraphNode(
                 node_id=author_id,
                 node_type=GraphNodeType.AUTHOR,
@@ -245,7 +258,7 @@ class KnowledgeGraph:
 
         # Create Concept nodes and edges
         for concept in knowledge.related_concepts:
-            concept_id = f"concept_{hash(concept) % (10**16):016d}"
+            concept_id = self.make_node_id("concept", concept)
             concept_node = GraphNode(
                 node_id=concept_id,
                 node_type=GraphNodeType.CONCEPT,
@@ -264,7 +277,7 @@ class KnowledgeGraph:
 
         # Create Technology nodes and edges
         for tech in knowledge.technologies:
-            tech_id = f"tech_{hash(tech) % (10**16):016d}"
+            tech_id = self.make_node_id("tech", tech)
             tech_node = GraphNode(
                 node_id=tech_id,
                 node_type=GraphNodeType.TECHNOLOGY,
@@ -283,7 +296,7 @@ class KnowledgeGraph:
 
         # Create Organization nodes
         for org in knowledge.organizations:
-            org_id = f"org_{hash(org) % (10**16):016d}"
+            org_id = self.make_node_id("org", org)
             org_node = GraphNode(
                 node_id=org_id,
                 node_type=GraphNodeType.ORGANIZATION,
@@ -294,7 +307,7 @@ class KnowledgeGraph:
 
             # Connect authors to organizations
             for author_name in knowledge.authors:
-                author_id = f"author_{hash(author_name) % (10**16):016d}"
+                author_id = self.make_node_id("author", author_name)
                 edge = GraphEdge(
                     edge_type=GraphEdgeType.AFFILIATED_WITH,
                     source_id=author_id,

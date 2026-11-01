@@ -5,10 +5,12 @@ Query the memory store.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from src.common.logging import get_logger
-from src.memory.store import MemoryStore
+
+if TYPE_CHECKING:
+    from src.memory.store import MemoryStore
 
 logger = get_logger(__name__)
 

@@ -5,11 +5,13 @@ Read and write files (reports, notes, etc.).
 
 from __future__ import annotations
 
-from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING
 
 from src.common.config import get_config
 from src.common.logging import get_logger
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 logger = get_logger(__name__)
 

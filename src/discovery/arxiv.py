@@ -5,20 +5,18 @@ Fetches papers from the arXiv API.
 
 from __future__ import annotations
 
-import re
+import contextlib
 from datetime import datetime
-from typing import Any
 from xml.etree import ElementTree
 
 import httpx
-from tenacity import retry, stop_after_attempt, wait_exponential
 
 from src.common.logging import get_logger
 from src.common.models import DocumentType, SourceDocument, SourceType
 
 logger = get_logger(__name__)
 
-ARXIV_API_URL = "http://export.arxiv.org/api/query"
+ARXIV_API_URL = "https://export.arxiv.org/api/query"
 
 # Category mappings for AI-related topics
 AI_CATEGORIES = {
@@ -49,7 +47,9 @@ class ArxivSource:
     ) -> list[SourceDocument]:
         """Search arXiv for papers matching a query."""
         params = {
-            "search_query": f"all:{query}",
+            # Quote the query so multi-word topics are treated as one phrase
+            # instead of turning into an implicit AND of single words.
+            "search_query": f'all:"{query}"',
             "start": 0,
             "max_results": max_results,
             "sortBy": sort_by,
@@ -138,12 +138,10 @@ class ArxivSource:
                     published_elem = entry.find("atom:published", ns)
                     published_date = None
                     if published_elem is not None:
-                        try:
+                        with contextlib.suppress(ValueError):
                             published_date = datetime.fromisoformat(
                                 published_elem.text.strip().replace("Z", "+00:00")
                             )
-                        except ValueError:
-                            pass
 
                     # Categories
                     categories = []

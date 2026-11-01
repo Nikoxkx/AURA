@@ -3,12 +3,10 @@ AURA - Test Configuration and Fixtures
 """
 
 import asyncio
-from typing import AsyncGenerator, Generator
-from unittest.mock import AsyncMock, MagicMock
+from collections.abc import Generator
+from unittest.mock import AsyncMock
 
 import pytest
-import pytest_asyncio
-
 from src.common.models import (
     DocumentType,
     EvaluatedDocument,
@@ -19,6 +17,17 @@ from src.common.models import (
     SourceDocument,
     SourceType,
 )
+
+# ── Isolation ─────────────────────────────────────────────────────────────────
+
+@pytest.fixture(autouse=True)
+def isolated_reports_dir(tmp_path, monkeypatch):
+    """Keep report files generated during tests out of the repository."""
+    from src.common.config import get_config
+
+    monkeypatch.setattr(
+        get_config().publication, "reports_dir", tmp_path / "reports"
+    )
 
 
 # ── Event Loop ────────────────────────────────────────────────────────────────

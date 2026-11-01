@@ -2,13 +2,10 @@
 AURA - Recovery & Security Tests
 """
 
-import asyncio
 import pytest
-from unittest.mock import AsyncMock
-
 from src.common.errors import AuraError, ErrorCategory
-from src.common.security import SecretsManager, AuditLogger, PermissionBoundary
-from src.common.recovery import CircuitBreaker, FallbackChain, ErrorRecovery
+from src.common.recovery import CircuitBreaker, ErrorRecovery, FallbackChain
+from src.common.security import PermissionBoundary, SecretsManager
 
 
 class TestSecretsManager:
@@ -131,9 +128,9 @@ class TestCircuitBreaker:
         cb = CircuitBreaker("test", failure_threshold=1)
 
         async def fail_fn():
-            raise Exception("test error")
+            raise RuntimeError("test error")
 
-        with pytest.raises(Exception):
+        with pytest.raises(RuntimeError):
             await cb.call(fail_fn)
 
         assert cb.state == "open"
@@ -180,15 +177,15 @@ class TestFallbackChain:
         chain = FallbackChain("test")
 
         async def handler1():
-            raise Exception("handler1 failed")
+            raise RuntimeError("handler1 failed")
 
         async def handler2():
-            raise Exception("handler2 failed")
+            raise RuntimeError("handler2 failed")
 
         chain.add_handler(handler1)
         chain.add_handler(handler2)
 
-        with pytest.raises(Exception):
+        with pytest.raises(RuntimeError):
             await chain.execute()
 
 

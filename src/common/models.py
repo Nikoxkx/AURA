@@ -6,15 +6,14 @@ from __future__ import annotations
 
 import hashlib
 from datetime import datetime
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 from pydantic import BaseModel, Field, field_validator
 
-
 # ── Enums ─────────────────────────────────────────────────────────────────────
 
-class SourceType(str, Enum):
+class SourceType(StrEnum):
     ARXIV = "arxiv"
     SEMANTIC_SCHOLAR = "semantic_scholar"
     CROSSREF = "crossref"
@@ -25,7 +24,7 @@ class SourceType(str, Enum):
     MANUAL = "manual"
 
 
-class DocumentType(str, Enum):
+class DocumentType(StrEnum):
     PAPER = "paper"
     ARTICLE = "article"
     REPOSITORY = "repository"
@@ -34,7 +33,7 @@ class DocumentType(str, Enum):
     NEWS = "news"
 
 
-class ImportanceLevel(str, Enum):
+class ImportanceLevel(StrEnum):
     CRITICAL = "critical"
     HIGH = "high"
     MEDIUM = "medium"
@@ -42,7 +41,7 @@ class ImportanceLevel(str, Enum):
     NOISE = "noise"
 
 
-class AgentPhase(str, Enum):
+class AgentPhase(StrEnum):
     PLANNING = "planning"
     DISCOVERY = "discovery"
     EVALUATION = "evaluation"
@@ -55,7 +54,7 @@ class AgentPhase(str, Enum):
     ERROR = "error"
 
 
-class RunStatus(str, Enum):
+class RunStatus(StrEnum):
     PENDING = "pending"
     RUNNING = "running"
     COMPLETED = "completed"
@@ -125,7 +124,7 @@ class ExtractedKnowledge(BaseModel):
 
 # ── Knowledge Graph Models ────────────────────────────────────────────────────
 
-class GraphNodeType(str, Enum):
+class GraphNodeType(StrEnum):
     PAPER = "Paper"
     AUTHOR = "Author"
     CONCEPT = "Concept"
@@ -133,7 +132,7 @@ class GraphNodeType(str, Enum):
     ORGANIZATION = "Organization"
 
 
-class GraphEdgeType(str, Enum):
+class GraphEdgeType(StrEnum):
     CITES = "CITES"
     RELATED_TO = "RELATED_TO"
     EXTENDS = "EXTENDS"
@@ -164,7 +163,7 @@ class GraphEdge(BaseModel):
 
 # ── Insight Models ────────────────────────────────────────────────────────────
 
-class InsightType(str, Enum):
+class InsightType(StrEnum):
     SYNTHESIS = "synthesis"
     CONTRADICTION = "contradiction"
     TREND = "trend"
@@ -182,6 +181,22 @@ class Insight(BaseModel):
     confidence: float = Field(default=0.7, ge=0.0, le=1.0)
     importance: ImportanceLevel = ImportanceLevel.MEDIUM
     created_at: datetime = Field(default_factory=datetime.utcnow)
+
+    @field_validator("confidence", mode="before")
+    @classmethod
+    def clamp_confidence(cls, v: Any) -> Any:
+        """Clamp confidence into [0, 1] instead of rejecting out-of-range values.
+
+        LLM output routinely overshoots the bounds (1.5, -0.2, "0.8"); a hard
+        validation error there would throw away an otherwise usable insight.
+        """
+        if v is None:
+            return 0.7
+        try:
+            value = float(v)
+        except (TypeError, ValueError):
+            return 0.7
+        return min(max(value, 0.0), 1.0)
 
 
 # ── Agent Run Models ──────────────────────────────────────────────────────────

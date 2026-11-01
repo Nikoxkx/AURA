@@ -5,16 +5,15 @@ AURA - Command Line Interface
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import signal
-import sys
-from typing import Optional
 
 import click
 from rich.console import Console
 from rich.table import Table
 
 from src.common.config import get_config, reload_config
-from src.common.logging import setup_logging, get_logger
+from src.common.logging import get_logger, setup_logging
 
 console = Console()
 logger = get_logger(__name__)
@@ -22,10 +21,10 @@ logger = get_logger(__name__)
 
 async def _run_single():
     """Run a single agent cycle."""
-    from src.common.llm_client import LLMClient
-    from src.memory.store import MemoryStore
-    from src.knowledge.graph import KnowledgeGraph
     from src.agent.core import AuraAgent
+    from src.common.llm_client import LLMClient
+    from src.knowledge.graph import KnowledgeGraph
+    from src.memory.store import MemoryStore
 
     config = get_config()
     llm = LLMClient(config.llm)
@@ -42,11 +41,21 @@ async def _run_single():
 
     try:
         await agent.initialize()
+    except Exception as e:
+        console.print(
+            "[red]Unable to initialize AURA:[/red] "
+            f"{e}\n\n"
+            "Are PostgreSQL (and optionally Neo4j) running? "
+            "Start them with [bold]docker compose -f docker/docker-compose.yml up -d[/bold] "
+            "and check DATABASE_URL / NEO4J_URI."
+        )
+        await llm.close()
+        raise SystemExit(1) from e
+
+    try:
         result = await agent.run_once()
-
-        # Display results
         _display_result(result)
-
+        return result
     finally:
         await agent.shutdown()
         await llm.close()
@@ -54,10 +63,10 @@ async def _run_single():
 
 async def _run_daemon():
     """Run the agent as a daemon."""
-    from src.common.llm_client import LLMClient
-    from src.memory.store import MemoryStore
-    from src.knowledge.graph import KnowledgeGraph
     from src.agent.core import AuraAgent
+    from src.common.llm_client import LLMClient
+    from src.knowledge.graph import KnowledgeGraph
+    from src.memory.store import MemoryStore
 
     config = get_config()
     llm = LLMClient(config.llm)
@@ -79,26 +88,99 @@ async def _run_daemon():
 
     try:
         await agent.initialize()
+    except Exception as e:
+        console.print(f"[red]Unable to initialize AURA:[/red] {e}")
+        await llm.close()
+        raise SystemExit(1) from e
+
+    try:
         await agent.run_daemon()
     finally:
         await agent.shutdown()
         await llm.close()
 
 
-async def _run_dashboard():
+async def _run_dashboard(host: str = "0.0.0.0", port: int | None = None):
     """Run the monitoring dashboard / API server."""
-    from src.agent.api import create_app
     import uvicorn
 
+    from src.agent.api import create_app
+
     config = get_config()
-    app = await create_app()
-    uvicorn.run(app, host="0.0.0.0", port=config.api_port)
+    app = await create_app(initialize=True)
+
+    server = uvicorn.Server(
+        uvicorn.Config(
+            app,
+            host=host,
+            port=port or config.api_port,
+            log_level=config.log_level.lower(),
+        )
+    )
+    # ``uvicorn.run()`` would try to start a second event loop while this
+    # coroutine's loop is already running, so drive the server directly.
+    await server.serve()
+
+
+async def _run_serve(host: str = "0.0.0.0", port: int | None = None):
+    """Run the API server and the autonomous agent loop in one process."""
+    import uvicorn
+
+    import src.agent.api as api
+    from src.agent.core import AuraAgent
+    from src.common.llm_client import LLMClient
+    from src.knowledge.graph import KnowledgeGraph
+    from src.memory.store import MemoryStore
+
+    config = get_config()
+
+    llm = LLMClient(config.llm)
+    await llm.initialize()
+
+    memory = MemoryStore(config.database.url)
+    graph = KnowledgeGraph(config.neo4j.uri, config.neo4j.user, config.neo4j.password)
+
+    agent = AuraAgent(llm_client=llm, memory_store=memory, knowledge_graph=graph)
+    await agent.initialize()
+
+    # Share the running agent with the API so /api/v1/trigger works.
+    api._agent = agent
+
+    app = await api.create_app(
+        memory=agent.memory,
+        graph=agent.graph,
+        initialize=True,
+        skip_graph=agent.graph is None,
+    )
+
+    server = uvicorn.Server(
+        uvicorn.Config(
+            app,
+            host=host,
+            port=port or config.api_port,
+            log_level=config.log_level.lower(),
+        )
+    )
+
+    daemon_task = asyncio.create_task(agent.run_daemon())
+    console.print(
+        f"[green]AURA serving[/green] on http://{host}:{port or config.api_port} "
+        f"(cycle every {config.agent.cycle_interval_minutes} min)"
+    )
+
+    try:
+        await server.serve()
+    finally:
+        agent.stop()
+        with contextlib.suppress(asyncio.CancelledError):
+            await daemon_task
+        await agent.shutdown()
+        await llm.close()
 
 
 async def _show_status():
     """Show current system status."""
     from src.memory.store import MemoryStore
-    from src.knowledge.graph import KnowledgeGraph
 
     config = get_config()
     memory = MemoryStore(config.database.url)
@@ -116,7 +198,10 @@ async def _show_status():
 
         console.print(table)
     except Exception as e:
-        console.print(f"[red]Error: {e}[/red]")
+        console.print(
+            f"[red]Unable to read system status:[/red] {e}\n"
+            "Is PostgreSQL running and DATABASE_URL correct?"
+        )
     finally:
         await memory.close()
 
@@ -144,6 +229,11 @@ def _display_result(result):
 @click.option("--log-level", default="INFO", help="Log level")
 def main(env: str, log_level: str):
     """AURA - Autonomous Research Understanding & Reporting Agent."""
+    import os
+
+    os.environ["AURA_ENV"] = env
+    os.environ["AURA_LOG_LEVEL"] = log_level.upper()
+    reload_config()
     setup_logging(log_level)
 
 
@@ -160,9 +250,19 @@ def daemon():
 
 
 @main.command()
-def dashboard():
+@click.option("--host", default="0.0.0.0", help="Bind address")
+@click.option("--port", default=None, type=int, help="Port (defaults to AURA_API_PORT)")
+def serve(host: str, port: int | None):
+    """Run the API server and the agent loop together."""
+    asyncio.run(_run_serve(host=host, port=port))
+
+
+@main.command()
+@click.option("--host", default="0.0.0.0", help="Bind address")
+@click.option("--port", default=None, type=int, help="Port (defaults to AURA_API_PORT)")
+def dashboard(host: str, port: int | None):
     """Start the monitoring dashboard."""
-    asyncio.run(_run_dashboard())
+    asyncio.run(_run_dashboard(host=host, port=port))
 
 
 @main.command()
@@ -186,10 +286,19 @@ async def _init_db(reset: bool):
     memory = MemoryStore(config.database.url)
 
     try:
+        if reset:
+            await memory.reset()
+            console.print("[yellow]Existing tables dropped[/yellow]")
         await memory.initialize()
+        stats = await memory.get_stats()
         console.print("[green]✓ Database initialized successfully[/green]")
+        console.print(f"  Documents: {stats.get('total_documents', 0)}")
     except Exception as e:
-        console.print(f"[red]✗ Database initialization failed: {e}[/red]")
+        console.print(
+            f"[red]✗ Database initialization failed: {e}[/red]\n"
+            "Is PostgreSQL running and DATABASE_URL correct?"
+        )
+        raise SystemExit(1) from e
     finally:
         await memory.close()
 

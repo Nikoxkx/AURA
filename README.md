@@ -393,7 +393,10 @@ python -m src.agent.cli run
 # Run continuously — one cycle every AURA_CYCLE_INTERVAL_MINUTES
 python -m src.agent.cli daemon
 
-# Start the REST API server (with auto-generated docs)
+# Run the REST API server and the agent loop in the same process
+python -m src.agent.cli serve
+
+# Start only the REST API server (with auto-generated docs)
 python -m src.agent.cli dashboard
 
 # Show current system statistics
@@ -401,9 +404,16 @@ python -m src.agent.cli status
 
 # Initialize database tables (run once after setup)
 python -m src.agent.cli init
+
+# ...or drop and recreate them
+python -m src.agent.cli init --reset
 ```
 
+The installed console script `aura` is equivalent to `python -m src.agent.cli`.
+
 When running as a daemon, AURA handles SIGINT and SIGTERM gracefully. It finishes the current cycle before shutting down.
+
+Neo4j is optional at runtime: if the knowledge graph cannot be reached, AURA logs a warning, skips the `connect` phase and keeps producing reports. PostgreSQL is required for persistence; without it `aura serve` still starts, but the API reports `degraded` and data endpoints return `503`.
 
 ---
 

@@ -12,13 +12,13 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.common.config import get_config
-from src.common.logging import setup_logging, get_logger
+from src.common.logging import get_logger, setup_logging
 from src.common.models import (
     DocumentType,
     ExtractedKnowledge,
+    ImportanceLevel,
     Insight,
     InsightType,
-    ImportanceLevel,
     SourceDocument,
     SourceType,
 )
@@ -28,8 +28,8 @@ logger = get_logger(__name__)
 
 async def seed():
     """Seed the database with sample data."""
-    from src.memory.store import MemoryStore
     from src.knowledge.graph import KnowledgeGraph
+    from src.memory.store import MemoryStore
 
     setup_logging("INFO")
     config = get_config()
@@ -132,7 +132,7 @@ async def seed():
 
     # Show stats
     stats = await memory.get_stats()
-    print(f"\nSeeding complete!")
+    print("\nSeeding complete!")
     print(f"  Total documents: {stats['total_documents']}")
     print(f"  Processed: {stats['processed_documents']}")
 

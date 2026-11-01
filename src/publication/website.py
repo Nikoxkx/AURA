@@ -5,13 +5,15 @@ Generates a static site for browsing reports, insights, and the knowledge graph.
 
 from __future__ import annotations
 
-import json
+import contextlib
 from datetime import datetime
-from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from src.common.config import get_config
 from src.common.logging import get_logger
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 logger = get_logger(__name__)
 
@@ -48,10 +50,8 @@ class WebsiteGenerator:
         """Generate the homepage."""
         stats = {}
         if self.memory:
-            try:
+            with contextlib.suppress(Exception):
                 stats = await self.memory.get_stats()
-            except Exception:
-                pass
 
         html = self._page_template(
             title="AURA - Autonomous Research Agent",
@@ -166,12 +166,9 @@ class WebsiteGenerator:
     async def _generate_stats_page(self) -> None:
         """Generate the statistics page."""
         stats = {}
-        graph_stats = {}
         if self.memory:
-            try:
+            with contextlib.suppress(Exception):
                 stats = await self.memory.get_stats()
-            except Exception:
-                pass
 
         rows = []
         for key, value in stats.items():

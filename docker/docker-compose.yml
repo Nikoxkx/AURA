@@ -3,8 +3,6 @@
 # Complete stack for production deployment.
 # =============================================================================
 
-version: "3.8"
-
 services:
   # ── PostgreSQL + pgvector ───────────────────────────────────────────────────
   postgres:
@@ -78,11 +76,14 @@ services:
     container_name: aura-agent
     restart: unless-stopped
     env_file:
-      - ../.env
+      # Optional: create it from .env.example at the repository root
+      - path: ../.env
+        required: false
     environment:
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-aura}:${POSTGRES_PASSWORD:-aura_password}@postgres:5432/${POSTGRES_DB:-aura}
       NEO4J_URI: bolt://neo4j:7687
       REDIS_URL: redis://redis:6379/0
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
     depends_on:
       postgres:
         condition: service_healthy
@@ -95,7 +96,6 @@ services:
       - ../config:/app/config
     ports:
       - "${AURA_API_PORT:-8080}:8080"
-      - "9090:9090"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
       interval: 30s

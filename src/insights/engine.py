@@ -5,20 +5,19 @@ Generates cross-paper synthesis, contradictions, trends, and opportunities.
 
 from __future__ import annotations
 
-import asyncio
-from datetime import datetime, timedelta
-from typing import Any
+import contextlib
 from collections import Counter
+from typing import Any
 
 from src.common.config import get_config
 from src.common.logging import get_logger
+from src.common.metrics import insights_generated_total, trends_detected_total
 from src.common.models import (
     ExtractedKnowledge,
     ImportanceLevel,
     Insight,
     InsightType,
 )
-from src.common.metrics import insights_generated_total, trends_detected_total
 
 logger = get_logger(__name__)
 
@@ -157,10 +156,7 @@ class InsightEngine:
         try:
             # Extract JSON from response
             json_match = re.search(r"\{[\s\S]*\}", response)
-            if json_match:
-                data = json.loads(json_match.group())
-            else:
-                data = json.loads(response)
+            data = json.loads(json_match.group()) if json_match else json.loads(response)
         except json.JSONDecodeError:
             logger.warning("insight_response_parse_failed")
             return insights
@@ -232,13 +228,11 @@ class InsightEngine:
 
                 # Update trend in memory
                 if self.memory:
-                    try:
+                    with contextlib.suppress(Exception):
                         await self.memory.update_trend(
                             topic=concept,
                             mention_count=count,
                         )
-                    except Exception:
-                        pass
 
         return insights
 
@@ -283,7 +277,7 @@ class InsightEngine:
 
         # Find potential contradictions (papers with same concepts but different methods)
         for concept, ks in multi_paper_concepts.items():
-            methods_sets = [set(m.lower() for m in k.methods) for k in ks]
+            methods_sets = [{m.lower() for m in k.methods} for k in ks]
             # Check if methods are disjoint (potential contradiction or alternative approaches)
             if len(ks) >= 2:
                 common_methods = methods_sets[0]

@@ -6,22 +6,24 @@ Handles retries, backoff, alternate sources, and permanent crash prevention.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import time
-from datetime import datetime
-from typing import Any, Callable, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from tenacity import (
+    before_sleep_log,
     retry,
+    retry_if_exception_type,
     stop_after_attempt,
     wait_exponential,
-    retry_if_exception_type,
-    before_sleep_log,
 )
 
-from src.common.config import get_config
 from src.common.errors import AuraError, ErrorCategory, ErrorSeverity
 from src.common.logging import get_logger
 from src.common.metrics import errors_total, retries_total
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 logger = get_logger(__name__)
 
@@ -54,12 +56,11 @@ class CircuitBreaker:
     @property
     def state(self) -> str:
         """Get current circuit breaker state."""
-        if self._state == "open":
-            if self._last_failure_time and (
-                time.monotonic() - self._last_failure_time >= self.recovery_timeout
-            ):
-                self._state = "half_open"
-                self._half_open_calls = 0
+        if self._state == "open" and self._last_failure_time and (
+            time.monotonic() - self._last_failure_time >= self.recovery_timeout
+        ):
+            self._state = "half_open"
+            self._half_open_calls = 0
         return self._state
 
     def record_success(self) -> None:
@@ -110,7 +111,7 @@ class CircuitBreaker:
             self.record_success()
             return result
 
-        except Exception as e:
+        except Exception:
             self.record_failure()
             errors_total.labels(category="circuit_breaker", severity="medium").inc()
             raise
@@ -125,7 +126,7 @@ class FallbackChain:
         self.name = name
         self._handlers: list[tuple[Callable, str]] = []
 
-    def add_handler(self, handler: Callable, name: str = "") -> "FallbackChain":
+    def add_handler(self, handler: Callable, name: str = "") -> FallbackChain:
         """Add a fallback handler."""
         self._handlers.append((handler, name or handler.__name__))
         return self
@@ -248,7 +249,7 @@ class ErrorRecovery:
 
         # Record the failure
         if self.memory:
-            try:
+            with contextlib.suppress(Exception):
                 await self.memory.record_failure(
                     operation=context.get("operation", "unknown"),
                     error_category=error_info.get("category", "unknown"),
@@ -256,8 +257,6 @@ class ErrorRecovery:
                     input_hash=context.get("input_hash", ""),
                     recovery_action=error_info["strategy"],
                 )
-            except Exception:
-                pass
 
         # Track metrics
         errors_total.labels(

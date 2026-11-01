@@ -5,15 +5,15 @@ Publishes reports to a GitHub repository.
 
 from __future__ import annotations
 
-from datetime import datetime
-from typing import Any
+from typing import TYPE_CHECKING
 
 import httpx
 
 from src.common.config import get_config
 from src.common.logging import get_logger
-from src.common.metrics import reports_published_total
-from src.common.models import Report
+
+if TYPE_CHECKING:
+    from src.common.models import Report
 
 logger = get_logger(__name__)
 
@@ -30,8 +30,9 @@ class GitHubPublisher:
         self.client = httpx.AsyncClient(
             base_url=GITHUB_API,
             headers={
-                "Authorization": f"token {self.token}",
-                "Accept": "application/vnd.github.v3+json",
+                "Authorization": f"Bearer {self.token}",
+                "Accept": "application/vnd.github+json",
+                "X-GitHub-Api-Version": "2022-11-28",
             },
             timeout=30.0,
         )
@@ -72,8 +73,13 @@ class GitHubPublisher:
             blob_response.raise_for_status()
             blob_sha = blob_response.json()["sha"]
 
-            # Get current tree
-            base_tree_sha = ref_data["object"]["sha"]
+            # A tree must be based on a *tree* SHA, not the commit SHA.
+            commit_sha_on_branch = ref_data["object"]["sha"]
+            commit_response = await self.client.get(
+                f"/repos/{self.repo}/git/commits/{commit_sha_on_branch}"
+            )
+            commit_response.raise_for_status()
+            base_tree_sha = commit_response.json()["tree"]["sha"]
 
             # Create tree
             tree_response = await self.client.post(
@@ -99,7 +105,7 @@ class GitHubPublisher:
                 json={
                     "message": commit_message,
                     "tree": tree_sha,
-                    "parents": [base_tree_sha],
+                    "parents": [commit_sha_on_branch],
                 },
             )
             commit_response.raise_for_status()

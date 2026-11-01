@@ -5,37 +5,20 @@ PostgreSQL-backed long-term memory with semantic search (pgvector).
 
 from __future__ import annotations
 
-import uuid
-from datetime import datetime
-from typing import Any, Optional
+from contextlib import asynccontextmanager
+from datetime import date, datetime
+from enum import Enum
+from typing import TYPE_CHECKING, Any
 
-import sqlalchemy
-from sqlalchemy import select, insert, update, delete, func, and_, or_, desc, text
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
-from sqlalchemy.dialects.postgresql import insert as pg_insert
+from pydantic import BaseModel
+from sqlalchemy import and_, desc, func, select, text, update
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from src.common.config import get_config
 from src.common.logging import get_logger
-from src.common.models import (
-    AgentPhase,
-    AgentPlan,
-    AgentRunResult,
-    DocumentType,
-    EvaluatedDocument,
-    ExtractedKnowledge,
-    ImportanceLevel,
-    Insight,
-    InsightType,
-    Reflection,
-    Report,
-    RunStatus,
-    SourceDocument,
-    SourceType,
-)
 from src.common.metrics import (
     documents_deduplicated_total,
     documents_discovered_total,
-    memory_entries_total,
     memory_search_duration_seconds,
 )
 from src.memory.models import (
@@ -51,7 +34,61 @@ from src.memory.models import (
     TrendRecord,
 )
 
+if TYPE_CHECKING:
+    import uuid
+    from collections.abc import AsyncIterator
+
+    from src.common.models import (
+        AgentRunResult,
+        EvaluatedDocument,
+        ExtractedKnowledge,
+        Insight,
+        Report,
+        SourceDocument,
+    )
+
 logger = get_logger(__name__)
+
+
+def _normalize_embedding(embedding: Any, dimensions: int = 1536) -> list[float] | None:
+    """Return a vector usable by pgvector, or None when we have no usable one.
+
+    pgvector rejects empty vectors and vectors of the wrong size, so a partial
+    or missing embedding must be stored as NULL instead of failing the insert.
+    """
+    if not embedding:
+        return None
+    try:
+        vector = [float(x) for x in embedding]
+    except (TypeError, ValueError):
+        return None
+    if len(vector) != dimensions:
+        logger.warning(
+            "embedding_dimension_mismatch",
+            expected=dimensions,
+            received=len(vector),
+        )
+        return None
+    return vector
+
+
+def _jsonable(value: Any) -> Any:
+    """Convert models/enums/datetimes into something JSONB can store."""
+    if value is None:
+        return None
+    if isinstance(value, BaseModel):
+        return value.model_dump(mode="json")
+    if isinstance(value, Enum):
+        return value.value
+    if isinstance(value, (datetime, date)):
+        return value.isoformat()
+    if isinstance(value, dict):
+        return {str(k): _jsonable(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple, set)):
+        return [_jsonable(v) for v in value]
+    if isinstance(value, (str, int, float, bool)):
+        return value
+    return str(value)
 
 
 class MemoryStore:
@@ -64,7 +101,13 @@ class MemoryStore:
         self.session_factory = None
 
     async def initialize(self) -> None:
-        """Initialize database connection and create tables."""
+        """Initialize database connection and create tables.
+
+        Safe to call more than once: repeated calls reuse the existing engine
+        (the API server and the agent share a single store).
+        """
+        if self.engine is not None and self.session_factory is not None:
+            return
         self.engine = create_async_engine(
             self.database_url,
             pool_size=20,
@@ -83,15 +126,43 @@ class MemoryStore:
 
         logger.info("memory_store_initialized")
 
+    async def reset(self) -> None:
+        """Drop every AURA table (destructive, used by `aura init --reset`)."""
+        self.engine = create_async_engine(self.database_url, echo=False)
+        async with self.engine.begin() as conn:
+            await conn.run_sync(Base.metadata.drop_all)
+        await self.engine.dispose()
+        self.engine = None
+        self.session_factory = None
+        logger.warning("memory_store_reset")
+
     async def close(self) -> None:
-        """Close database connections."""
+        """Close database connections (idempotent)."""
         if self.engine:
             await self.engine.dispose()
+            self.engine = None
+            self.session_factory = None
             logger.info("memory_store_closed")
 
-    async def get_session(self) -> AsyncSession:
-        """Get a new database session."""
-        return self.session_factory()
+    @asynccontextmanager
+    async def get_session(self) -> AsyncIterator[AsyncSession]:
+        """Yield a database session, closing it when the context exits.
+
+        Used as ``async with self.get_session() as session:`` throughout the
+        store.  The session factory must have been created by ``initialize()``.
+        """
+        if self.session_factory is None:
+            raise RuntimeError(
+                "MemoryStore is not initialized - call initialize() before using it"
+            )
+        session: AsyncSession = self.session_factory()
+        try:
+            yield session
+        except Exception:
+            await session.rollback()
+            raise
+        finally:
+            await session.close()
 
     # ── Document Operations ───────────────────────────────────────────────────
 
@@ -122,7 +193,7 @@ class MemoryStore:
                 published_date=doc.published_date,
                 discovered_date=doc.discovered_date,
                 keywords=doc.keywords,
-                metadata=doc.metadata,
+                extra_metadata=_jsonable(doc.metadata),
             )
             session.add(db_doc)
             await session.commit()
@@ -172,8 +243,9 @@ class MemoryStore:
                 "processed": True,
                 "processed_date": datetime.utcnow(),
             }
-            if embedding:
-                values["embedding"] = embedding
+            normalized = _normalize_embedding(embedding)
+            if normalized:
+                values["embedding"] = normalized
             await session.execute(
                 update(Document).where(Document.id == document_id).values(**values)
             )
@@ -190,7 +262,7 @@ class MemoryStore:
                 select(Document)
                 .where(
                     and_(
-                        Document.processed == False,
+                        not Document.processed,
                         Document.importance.in_(importance_order),
                     )
                 )
@@ -243,7 +315,7 @@ class MemoryStore:
                 technologies=knowledge.technologies,
                 organizations=knowledge.organizations,
                 summary=knowledge.summary,
-                embedding=embedding or knowledge.embedding,
+                embedding=_normalize_embedding(embedding or knowledge.embedding),
             )
             session.add(db_knowledge)
             await session.commit()
@@ -335,7 +407,7 @@ class MemoryStore:
                 phase=phase,
                 thought_type=thought_type,
                 content=content,
-                metadata=metadata or {},
+                extra_metadata=_jsonable(metadata or {}),
                 embedding=embedding,
             )
             session.add(thought)
@@ -380,6 +452,14 @@ class MemoryStore:
 
     async def complete_run(self, run_result: AgentRunResult) -> None:
         """Mark a run as complete."""
+        reflection = run_result.reflection or {}
+        quality_score = 0.0
+        if isinstance(reflection, dict):
+            try:
+                quality_score = float(reflection.get("quality_score", 0.0) or 0.0)
+            except (TypeError, ValueError):
+                quality_score = 0.0
+
         async with self.get_session() as session:
             await session.execute(
                 update(AgentRun)
@@ -392,8 +472,9 @@ class MemoryStore:
                     insights_generated=run_result.insights_generated,
                     graph_nodes_added=run_result.graph_nodes_added,
                     graph_edges_added=run_result.graph_edges_added,
-                    errors=run_result.errors,
-                    reflection=run_result.reflection,
+                    errors=_jsonable(run_result.errors),
+                    reflection=_jsonable(reflection),
+                    quality_score=quality_score,
                     completed_at=datetime.utcnow(),
                     duration_seconds=run_result.duration_seconds,
                 )
@@ -483,7 +564,7 @@ class MemoryStore:
                     topic=topic,
                     mention_count=mention_count,
                     time_window_days=time_window_days,
-                    metadata=metadata,
+                    extra_metadata=_jsonable(metadata),
                 )
                 session.add(new_trend)
                 await session.commit()
@@ -511,7 +592,7 @@ class MemoryStore:
                 title=report.title,
                 report_type=report.report_type,
                 content_markdown=report.content_markdown,
-                insights=[i.model_dump() for i in report.insights],
+                insights=[i.model_dump(mode="json") for i in report.insights],
                 documents_covered=report.documents_covered,
                 published=report.published,
             )
@@ -536,7 +617,7 @@ class MemoryStore:
             metric = QualityMetric(
                 metric_name=name,
                 metric_value=value,
-                context=context or {},
+                context=_jsonable(context or {}),
             )
             session.add(metric)
             await session.commit()
@@ -590,7 +671,7 @@ class MemoryStore:
         async with self.get_session() as session:
             total_docs = await session.scalar(select(func.count(Document.id)))
             processed_docs = await session.scalar(
-                select(func.count(Document.id)).where(Document.processed == True)
+                select(func.count(Document.id)).where(Document.processed)
             )
             total_insights = await session.scalar(select(func.count(InsightRecord.id)))
             total_runs = await session.scalar(select(func.count(AgentRun.id)))

@@ -3,10 +3,9 @@ AURA - Integration Tests
 Tests that require running infrastructure services.
 """
 
-import asyncio
 import os
+
 import pytest
-from datetime import datetime
 
 # Skip all tests if not in integration test mode
 pytestmark = pytest.mark.skipif(
@@ -51,7 +50,7 @@ class TestDatabaseIntegration:
     @pytest.mark.asyncio
     async def test_store_and_retrieve_document(self, memory_store):
         """Test storing and retrieving a document."""
-        from src.common.models import SourceDocument, SourceType, DocumentType
+        from src.common.models import DocumentType, SourceDocument, SourceType
 
         doc = SourceDocument(
             title="Integration Test Paper",
@@ -74,7 +73,7 @@ class TestDatabaseIntegration:
     @pytest.mark.asyncio
     async def test_deduplication(self, memory_store):
         """Test that duplicate documents are not stored twice."""
-        from src.common.models import SourceDocument, SourceType, DocumentType
+        from src.common.models import DocumentType, SourceDocument, SourceType
 
         doc = SourceDocument(
             title="Dedup Test",
@@ -126,7 +125,7 @@ class TestKnowledgeGraphIntegration:
     @pytest.mark.asyncio
     async def test_add_edge(self, knowledge_graph):
         """Test adding an edge between nodes."""
-        from src.common.models import GraphNode, GraphEdge, GraphNodeType, GraphEdgeType
+        from src.common.models import GraphEdge, GraphEdgeType, GraphNode, GraphNodeType
 
         # Create two nodes
         node_a = GraphNode(

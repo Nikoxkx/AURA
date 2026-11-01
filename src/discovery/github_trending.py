@@ -22,6 +22,26 @@ GITHUB_TRENDING_URL = "https://github.com/trending"
 GITHUB_API_BASE = "https://api.github.com"
 
 
+def _parse_count(text: str) -> int:
+    """Parse "52,787" / "1.2k" / "3,456 stars today" into an int."""
+    if not text:
+        return 0
+    match = re.search(r"([\d.,]+)\s*([kKmM]?)", text)
+    if not match:
+        return 0
+    number = match.group(1).replace(",", "")
+    try:
+        value = float(number)
+    except ValueError:
+        return 0
+    suffix = match.group(2).lower()
+    if suffix == "k":
+        value *= 1_000
+    elif suffix == "m":
+        value *= 1_000_000
+    return int(value)
+
+
 class GitHubTrendingSource:
     """Discovers trending repositories from GitHub."""
 
@@ -48,22 +68,32 @@ class GitHubTrendingSource:
         Get trending repositories.
         Falls back to GitHub API search if scraping fails.
         """
-        documents = []
+        documents: list[SourceDocument] = []
+        seen_urls: set[str] = set()
 
-        # Try GitHub API search (more reliable than scraping)
+        def _extend(docs: list[SourceDocument]) -> None:
+            for doc in docs:
+                if doc.url in seen_urls:
+                    continue
+                seen_urls.add(doc.url)
+                documents.append(doc)
+
+        # The trending page is the actual "trending" signal (the search API has
+        # no trending endpoint), so try it first and fall back to search.
         try:
-            docs = await self._search_trending_api(language, since, max_results)
-            documents.extend(docs)
+            _extend(await self._scrape_trending(language, since))
         except Exception as e:
-            logger.warning("github_api_trending_failed", error=str(e))
+            logger.warning("github_scraping_failed", error=str(e))
 
-        # If API didn't return enough, try scraping
         if len(documents) < max_results:
             try:
-                docs = await self._scrape_trending(language, since)
-                documents.extend(docs)
+                _extend(
+                    await self._search_trending_api(
+                        language, since, max_results - len(documents)
+                    )
+                )
             except Exception as e:
-                logger.warning("github_scraping_failed", error=str(e))
+                logger.warning("github_api_trending_failed", error=str(e))
 
         return documents[:max_results]
 
@@ -132,10 +162,16 @@ class GitHubTrendingSource:
                 desc_elem = article.select_one("p")
                 description = desc_elem.get_text(strip=True) if desc_elem else ""
 
-                # Stars
-                stars_elem = article.select_one("a.Link--muted.d-inline-block.mr-3")
-                stars_text = stars_elem.get_text(strip=True) if stars_elem else "0"
-                stars = int(stars_text.replace(",", "")) if stars_text.replace(",", "").isdigit() else 0
+                # Stars / forks. GitHub's markup changed over time, so match on
+                # the link targets rather than on the old class names.
+                stars_elem = article.select_one('a[href$="/stargazers"]')
+                forks_elem = article.select_one('a[href$="/forks"]')
+                stars = _parse_count(stars_elem.get_text(strip=True) if stars_elem else "")
+                forks = _parse_count(forks_elem.get_text(strip=True) if forks_elem else "")
+
+                # Stars gained today (shown as "1,234 stars today")
+                today_elem = article.select_one("span.d-inline-block.float-sm-right")
+                stars_today = _parse_count(today_elem.get_text(strip=True) if today_elem else "")
 
                 # Language
                 lang_elem = article.select_one("[itemprop='programmingLanguage']")
@@ -150,6 +186,8 @@ class GitHubTrendingSource:
                     keywords=[lang] if lang else [],
                     metadata={
                         "stars": stars,
+                        "forks": forks,
+                        "stars_today": stars_today,
                         "language": lang,
                         "description": description,
                     },

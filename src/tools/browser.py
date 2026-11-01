@@ -10,8 +10,8 @@ from typing import Any
 import httpx
 from bs4 import BeautifulSoup
 
-from src.common.logging import get_logger
 from src.common.errors import AuraError
+from src.common.logging import get_logger
 
 logger = get_logger(__name__)
 
@@ -67,7 +67,7 @@ class BrowserTool:
 
         except Exception as e:
             logger.error("page_fetch_error", url=url, error=str(e))
-            raise AuraError(f"Failed to fetch page: {e}")
+            raise AuraError(f"Failed to fetch page: {e}") from e
 
     def _extract_content(self, soup: BeautifulSoup) -> str:
         """Extract readable text content from a page."""

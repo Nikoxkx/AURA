@@ -15,14 +15,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     g++ \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy requirements and install
-COPY pyproject.toml ./
-RUN pip install --no-cache-dir --prefix=/install .
+# Copy only what the build needs first (pyproject reads README.md, and the
+# package itself lives in src/) so the dependency layer is cached properly.
+COPY pyproject.toml README.md ./
+COPY src ./src
 
-# Copy source code
-COPY . .
-
-# Install the package
 RUN pip install --no-cache-dir --prefix=/install .
 
 # ── Stage 2: Production ──────────────────────────────────────────────────────
@@ -44,7 +41,7 @@ WORKDIR /app
 # Copy installed packages from builder
 COPY --from=builder /install /usr/local
 
-# Copy application code
+# Copy application code (config, prompts, etc.)
 COPY --chown=aura:aura . .
 
 # Create necessary directories
@@ -64,8 +61,8 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
     CMD curl -f http://localhost:8080/health || exit 1
 
 # Expose API port
-EXPOSE 8080 9090
+EXPOSE 8080
 
-# Default entrypoint
+# Default entrypoint: API server + autonomous agent loop in one process
 ENTRYPOINT ["python", "-m", "src.agent.cli"]
-CMD ["daemon"]
+CMD ["serve"]

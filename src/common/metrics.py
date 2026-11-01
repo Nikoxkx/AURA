@@ -4,7 +4,7 @@ AURA - Prometheus metrics collection.
 
 from __future__ import annotations
 
-from prometheus_client import Counter, Gauge, Histogram, Summary
+from prometheus_client import Counter, Gauge, Histogram
 
 # ── Agent Metrics ─────────────────────────────────────────────────────────────
 
@@ -22,8 +22,31 @@ agent_cycle_duration_seconds = Histogram(
 
 agent_current_phase = Gauge(
     "aura_agent_current_phase",
-    "Current phase of the agent (as numeric code)",
+    "Current phase of the agent (1 for the active phase, 0 otherwise)",
+    ["phase"],
 )
+
+# Canonical phase order, mirrors src.common.models.AgentPhase. Duplicated here
+# to keep this module dependency-free.
+_AGENT_PHASES = (
+    "planning",
+    "discovery",
+    "evaluation",
+    "extraction",
+    "connection",
+    "synthesis",
+    "reflection",
+    "publication",
+    "sleeping",
+    "error",
+)
+
+
+def set_agent_phase(phase: str) -> None:
+    """Mark one agent phase as active and clear the others."""
+    phase_value = getattr(phase, "value", phase)
+    for name in _AGENT_PHASES:
+        agent_current_phase.labels(phase=name).set(1.0 if name == phase_value else 0.0)
 
 # ── Discovery Metrics ─────────────────────────────────────────────────────────
 

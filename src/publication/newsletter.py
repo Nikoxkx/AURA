@@ -10,7 +10,7 @@ from typing import Any
 
 from src.common.config import get_config
 from src.common.logging import get_logger
-from src.common.models import Insight, InsightType, ImportanceLevel
+from src.common.models import ImportanceLevel, Insight, InsightType
 
 logger = get_logger(__name__)
 

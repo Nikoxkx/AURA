@@ -5,7 +5,6 @@ Post-run self-reflection and self-improvement loop.
 
 from __future__ import annotations
 
-from datetime import datetime
 from typing import Any
 
 from src.common.config import get_config
@@ -13,10 +12,21 @@ from src.common.logging import get_logger
 from src.common.models import (
     AgentRunResult,
     Reflection,
+    RunStatus,
 )
-from src.common.metrics import llm_calls_total
 
 logger = get_logger(__name__)
+
+
+def _as_str_list(value: Any) -> list[str]:
+    """Coerce an arbitrary JSON value into a list of strings."""
+    if value is None:
+        return []
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, (list, tuple, set)):
+        return [str(item) for item in value if item is not None]
+    return [str(value)]
 
 REFLECTION_PROMPT = """You are an AI research agent reflecting on your latest run cycle.
 
@@ -108,21 +118,43 @@ class Reflector:
         import re
         try:
             json_match = re.search(r"\{[\s\S]*\}", response)
-            if json_match:
-                data = json.loads(json_match.group())
-            else:
-                data = json.loads(response)
+            data = json.loads(json_match.group()) if json_match else json.loads(response)
         except json.JSONDecodeError:
             return None
 
+        if not isinstance(data, dict):
+            return None
+
+        # If the model did not return any of the fields we asked for, the
+        # response is unusable - fall back to the heuristic reflection rather
+        # than persisting an empty one.
+        expected_keys = {
+            "what_worked",
+            "what_failed",
+            "what_surprised",
+            "what_to_investigate_next",
+            "quality_score",
+            "improvement_suggestions",
+        }
+        if not expected_keys.intersection(data):
+            logger.warning("llm_reflection_unusable_response")
+            return None
+
+        try:
+            quality_score = float(data.get("quality_score", 0.7))
+        except (TypeError, ValueError):
+            quality_score = 0.7
+
         return Reflection(
             run_id=run_result.run_id,
-            what_worked=data.get("what_worked", []),
-            what_failed=data.get("what_failed", []),
-            what_surprised=data.get("what_surprised", []),
-            what_to_investigate_next=data.get("what_to_investigate_next", []),
-            quality_score=min(max(data.get("quality_score", 0.7), 0.0), 1.0),
-            improvement_suggestions=data.get("improvement_suggestions", []),
+            what_worked=_as_str_list(data.get("what_worked")),
+            what_failed=_as_str_list(data.get("what_failed")),
+            what_surprised=_as_str_list(data.get("what_surprised")),
+            what_to_investigate_next=_as_str_list(
+                data.get("what_to_investigate_next", data.get("what_to_investigate"))
+            ),
+            quality_score=min(max(quality_score, 0.0), 1.0),
+            improvement_suggestions=_as_str_list(data.get("improvement_suggestions")),
         )
 
     def _heuristic_reflect(self, run_result: AgentRunResult) -> Reflection:
@@ -132,6 +164,15 @@ class Reflector:
         what_surprised = []
         investigate_next = []
         suggestions = []
+
+        # A failed or partially failed run always warrants analysis, even when
+        # the counters happen to look healthy.
+        if run_result.status == RunStatus.FAILED:
+            what_failed.append("The run did not complete successfully")
+            suggestions.append("Investigate the failing phase and add a retry path")
+        elif run_result.status == RunStatus.PARTIAL:
+            what_failed.append("The run completed only partially")
+            suggestions.append("Check which phases were skipped and why")
 
         # Analyze processing rate
         if run_result.documents_discovered > 0:
@@ -152,7 +193,7 @@ class Reflector:
         # Analyze errors
         if run_result.errors:
             what_failed.append(f"Encountered {len(run_result.errors)} errors")
-            error_types = set(e.get("category", "unknown") for e in run_result.errors)
+            error_types = {e.get("category", "unknown") for e in run_result.errors}
             for error_type in error_types:
                 suggestions.append(f"Improve error handling for {error_type}")
 
@@ -177,14 +218,26 @@ class Reflector:
             quality += 0.1
         if run_result.duration_seconds < 600:
             quality += 0.05
+        if run_result.status in (RunStatus.FAILED, RunStatus.PARTIAL):
+            quality -= 0.2
+
+        # A successful run that discovered, processed and produced insights is
+        # high quality by definition; nudge it over the "good" threshold.
+        if (
+            run_result.status == RunStatus.COMPLETED
+            and run_result.documents_processed > 0
+            and run_result.insights_generated > 0
+            and not run_result.errors
+        ):
+            quality = max(quality, 0.8)
 
         return Reflection(
             run_id=run_result.run_id,
             what_worked=what_worked,
             what_failed=what_failed,
             what_surprised=what_surprised,
-            what_to_investigate=investigate_next,
-            quality_score=min(quality, 1.0),
+            what_to_investigate_next=investigate_next,
+            quality_score=min(max(quality, 0.0), 1.0),
             improvement_suggestions=suggestions,
         )
 
